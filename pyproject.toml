@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "claude-offline-update"
+version = "1.0.0"
+description = "Batch update Claude Code across remote machines without direct internet access"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+keywords = ["claude", "claude-code", "offline-update", "ssh", "batch-update"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: System :: Systems Administration",
+    "Topic :: Utilities",
+]
+dependencies = [
+    "click>=8.0",
+    "rich>=13.0",
+    "questionary>=2.0",
+    "paramiko>=3.0,<4.0",
+    "httpx>=0.24",
+    "pyyaml>=6.0",
+    "packaging>=23.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.4.0",
+    "mypy>=1.0",
+]
+
+[project.scripts]
+claude-update = "claude_offline_updater.cli:cli"
+
+[project.urls]
+Repository = "https://github.com/xiaofeng025019/claude_offline_updater"
+Bug-Tracker = "https://github.com/xiaofeng025019/claude_offline_updater/issues"
+
+[tool.setuptools.packages.find]
+include = ["claude_offline_updater*"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+"claude_offline_updater/i18n.py" = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,40 @@
+# Claude Code Offline Updater - Configuration Template
+#
+# Install to:  ~/.config/claude-update/config.yaml
+# Or run from: ./config.yaml  (current directory, takes precedence)
+#
+# Quick start:
+#   cp config.yaml.example ~/.config/claude-update/config.yaml
+
+settings:
+  max_versions: 3                    # Max versions to keep on remote machines
+  remote_claude_bin: ~/.local/bin/claude
+  remote_versions_dir: ~/.local/share/claude/versions
+  remote_tmp_dir: /tmp/claude-update
+  download_base: https://downloads.claude.ai/claude-code-releases
+  platform: linux-x64                # linux-x64 | linux-arm64 | darwin-arm64
+  local_cache_dir: ~/.cache/claude-update
+  ssh_host_key_policy: warn          # auto | warn | reject
+  connect_timeout: 10                # SSH connect timeout (seconds)
+  download_timeout: 300              # Download timeout (seconds)
+  max_retries: 3                     # Network operation retries
+  max_workers: 5                     # Max parallel deployments
+  scp_bandwidth_limit: 0             # KB/s, 0 = unlimited
+  lang: en                           # en | zh
+
+local:
+  enabled: true
+  claude_bin: ~/.local/bin/claude
+  versions_dir: ~/.local/share/claude/versions
+
+machines:
+  - name: server1
+    host: 192.168.1.100
+    port: 22
+    user: root
+    tags: [production, linux]
+  # - name: server2
+  #   host: 192.168.1.101
+  #   port: 2222
+  #   user: ubuntu
+  #   tags: [staging, linux]
