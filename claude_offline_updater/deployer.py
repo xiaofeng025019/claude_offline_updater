@@ -13,7 +13,7 @@ import paramiko
 
 from .cleaner import cleanup_local_versions, cleanup_old_versions
 from .config import LocalConfig, Settings
-from .display import info, success, warn
+from .display import _prefix, info, success, warn
 from .i18n import t
 
 
@@ -38,7 +38,7 @@ def deploy_local(
     if current_ver == target_version:
         return {**base_result, "status": "skipped", "duration_seconds": 0}
 
-    info(f"[localhost] {t('deploy_local')}")
+    info(f"{_prefix('localhost')}{t('deploy_local')}")
 
     # Record current symlink target for rollback
     claude_bin_path = os.path.expanduser(local.claude_bin)
@@ -60,7 +60,7 @@ def deploy_local(
 
     # fallback: local manual deployment
     if not install_ok:
-        info(f"[localhost] {t('deploy_offline')}")
+        info(f"{_prefix('localhost')}{t('deploy_offline')}")
         versions_dir = os.path.expanduser(local.versions_dir)
         claude_bin = os.path.expanduser(local.claude_bin)
 
@@ -84,7 +84,7 @@ def deploy_local(
                     "duration_seconds": time.time() - start_time}
 
     # Verify version
-    info(f"[localhost] {t('verifying_version')}")
+    info(f"{_prefix('localhost')}{t('verifying_version')}")
     claude_bin = os.path.expanduser(local.claude_bin)
     try:
         proc = subprocess.run(
@@ -98,7 +98,7 @@ def deploy_local(
             # Verification failed, rollback
             if rollback_target:
                 _local_rollback(claude_bin_path, rollback_target)
-                warn(f"[localhost] {t('local_rollback')}")
+                warn(f"{_prefix('localhost')}{t('local_rollback')}")
             return {**base_result, "status": "failed",
                     "detail": f"{t('version_verify_fail')}: {installed_ver}",
                     "duration_seconds": time.time() - start_time}
@@ -106,7 +106,7 @@ def deploy_local(
         # Verification exception, rollback
         if rollback_target:
             _local_rollback(claude_bin_path, rollback_target)
-            warn(f"[localhost] {t('local_rollback_err')}")
+            warn(f"{_prefix('localhost')}{t('local_rollback_err')}")
         return {**base_result, "status": "failed",
                 "detail": f"{t('verify_failed')}: {e}",
                 "duration_seconds": time.time() - start_time}
@@ -114,7 +114,7 @@ def deploy_local(
     # Cleanup old versions
     cleanup_local_versions(local, settings.max_versions, label="localhost")
 
-    success(f"[localhost] {t('update_complete')}: {current_ver} → {target_version}")
+    success(f"{_prefix('localhost')}{t('update_complete')}: {current_ver} → {target_version}")
     return {**base_result, "status": "success",
             "duration_seconds": time.time() - start_time}
 
@@ -126,7 +126,7 @@ def _local_rollback(claude_bin: str, target: str):
             os.remove(claude_bin)
         os.symlink(target, claude_bin)
     except Exception as e:
-        warn(f"[localhost] {t('rollback_failed', detail=str(e))}")
+        warn(f"{_prefix('localhost')}{t('rollback_failed', detail=str(e))}")
 
 
 def deploy_to_machine(
@@ -161,7 +161,7 @@ def deploy_to_machine(
 
         rollback_target = _get_current_symlink(client, settings.remote_claude_bin)
 
-        info(f"[{name}] {t('transferring')}")
+        info(f"{_prefix(name)}{t('transferring')}")
         sftp = client.open_sftp()
         remote_tmp = _resolve_remote_path(client, settings.remote_tmp_dir)
         remote_path = f"{remote_tmp}/claude"
@@ -178,7 +178,7 @@ def deploy_to_machine(
 
         client.exec_command(f"chmod +x {shlex.quote(remote_path)}", timeout=10)
 
-        info(f"[{name}] {t('installing')}")
+        info(f"{_prefix(name)}{t('installing')}")
         install_ok = False
         try:
             stdin, stdout, stderr = client.exec_command(
@@ -190,7 +190,7 @@ def deploy_to_machine(
             pass
 
         if not install_ok:
-            info(f"[{name}] {t('deploy_offline')}")
+            info(f"{_prefix(name)}{t('deploy_offline')}")
             vdir = shlex.quote(settings.remote_versions_dir)
             cbin = shlex.quote(settings.remote_claude_bin)
             rpath = shlex.quote(remote_path)
@@ -211,7 +211,7 @@ def deploy_to_machine(
             _ensure_path(client, label=name)
             _set_install_method_remote(client, label=name)
 
-        info(f"[{name}] {t('verifying_version')}")
+        info(f"{_prefix(name)}{t('verifying_version')}")
         stdin, stdout, stderr = client.exec_command(
             f"{shlex.quote(settings.remote_claude_bin)} --version 2>/dev/null", timeout=10,
         )
@@ -222,7 +222,7 @@ def deploy_to_machine(
         if installed_ver != target_version:
             if rollback_target:
                 _rollback_symlink(client, settings.remote_claude_bin, rollback_target, label=name)
-                warn(f"[{name}] {t('remote_rollback')} {rollback_target}")
+                warn(f"{_prefix(name)}{t('remote_rollback')} {rollback_target}")
             return {**base_result, "status": "failed",
                     "detail": f"{t('version_verify_fail')}: {installed_ver}",
                     "duration_seconds": time.time() - start_time}
@@ -230,7 +230,7 @@ def deploy_to_machine(
         cleanup_old_versions(client, settings, label=name)
         client.exec_command(f"rm -rf {shlex.quote(settings.remote_tmp_dir)}", timeout=10)
 
-        success(f"[{name}] {t('update_complete')}: {current_ver} → {target_version}")
+        success(f"{_prefix(name)}{t('update_complete')}: {current_ver} → {target_version}")
         return {**base_result, "status": "success",
                 "duration_seconds": time.time() - start_time}
 
@@ -243,7 +243,7 @@ def deploy_to_machine(
                         rollback_client, settings.remote_claude_bin,
                         rollback_target, label=name,
                     )
-                    warn(f"[{name}] {t('deploy_exception_rollback')} {rollback_target}")
+                    warn(f"{_prefix(name)}{t('deploy_exception_rollback')} {rollback_target}")
                 finally:
                     rollback_client.close()
             except Exception:
@@ -353,7 +353,7 @@ def _get_current_symlink(client: paramiko.SSHClient, claude_bin: str) -> str | N
 
 def _rollback_symlink(client: paramiko.SSHClient, claude_bin: str, target: str, label: str = ""):
     """Rollback symlink to specified target"""
-    prefix = f"[{label}] " if label else ""
+    prefix = _prefix(label)
     try:
         client.exec_command(
             f"ln -sf {shlex.quote(target)} {shlex.quote(claude_bin)}", timeout=10,
@@ -410,7 +410,7 @@ def _ensure_remote_dir(client: paramiko.SSHClient, path: str):
 
 def _ensure_path(client: paramiko.SSHClient, label: str = ""):
     """Ensure ~/.local/bin is in PATH (check .bashrc, add if missing, no duplicates)"""
-    prefix = f"[{label}] " if label else ""
+    prefix = _prefix(label)
     check_cmd = "grep -q '\\.local/bin' ~/.bashrc 2>/dev/null; echo $?"
     stdin, stdout, stderr = client.exec_command(check_cmd, timeout=10)
     result = stdout.read().decode().strip()
@@ -428,7 +428,7 @@ def _ensure_path(client: paramiko.SSHClient, label: str = ""):
 
 def _set_install_method_remote(client: paramiko.SSHClient, label: str = ""):
     """Set installMethod to native in remote ~/.claude.json"""
-    prefix = f"[{label}] " if label else ""
+    prefix = _prefix(label)
     # Try python3 → python → node to modify ~/.claude.json
     py_code = (
         'import json,os; '
@@ -475,6 +475,6 @@ def _set_install_method_local():
         d["installMethod"] = "native"
         with open(claude_json, "w") as f:
             json.dump(d, f, indent=2)
-        info(f"[localhost] {t('install_method_set')}")
+        info(f"{_prefix('localhost')}{t('install_method_set')}")
     except Exception as e:
-        warn(f"[localhost] {t('install_method_set_failed')}: {e}")
+        warn(f"{_prefix('localhost')}{t('install_method_set_failed')}: {e}")

@@ -6,14 +6,14 @@ import shlex
 import paramiko
 
 from .config import LocalConfig, Settings
-from .display import info, success
+from .display import _prefix, info, success
 from .i18n import t
 
 
 def cleanup_old_versions(client: paramiko.SSHClient, settings: Settings,
                          label: str = ""):
     """Clean remote old versions (keep latest N valid versions)"""
-    prefix = f"[{label}] " if label else ""
+    prefix = _prefix(label)
     info(f"{prefix}{t('cleaning_remote')}")
 
     max_ver = int(settings.max_versions)
@@ -52,7 +52,7 @@ ls -lh 2>/dev/null | awk 'NR>1 {{print "  " $NF " (" $5 ")"}}'
 def cleanup_local_versions(local: LocalConfig, max_versions: int,
                            label: str = "localhost"):
     """Clean local old versions (keep latest N valid versions)"""
-    prefix = f"[{label}] " if label else ""
+    prefix = _prefix(label)
     info(f"{prefix}{t('cleaning_local')}")
     versions_dir = os.path.expanduser(local.versions_dir)
 
