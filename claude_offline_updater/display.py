@@ -16,6 +16,13 @@ from .i18n import t
 console = Console()
 
 
+def _prefix(label: str) -> str:
+    """Return a Rich-safe bracket prefix like \\[name] — Rich eats [x] as style tags"""
+    if not label:
+        return ""
+    return f"\\[{label}] "
+
+
 def info(msg: str):
     console.print(f"[blue][INFO][/blue] {msg}")
 
