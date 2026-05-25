@@ -1,6 +1,7 @@
 """Parallel machine version scanning (local + remote)"""
 
 import contextlib
+import logging
 import os
 import re
 import shlex
@@ -11,6 +12,10 @@ import paramiko
 
 from .config import LocalConfig, Machine, Settings
 from .i18n import t
+
+# Suppress paramiko's noisy transport-level logging (connection failures
+# print stack traces to stderr via logging). Only show CRITICAL.
+logging.getLogger("paramiko").setLevel(logging.CRITICAL)
 
 
 def scan_local(local: LocalConfig) -> dict:
@@ -135,4 +140,5 @@ def _get_remote_version(machine: Machine, settings: Settings) -> str:
         return t("status_conn_failed")
     finally:
         if client:
-            client.close()
+            with contextlib.suppress(Exception):
+                client.close()
