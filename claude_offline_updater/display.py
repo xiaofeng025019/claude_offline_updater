@@ -72,6 +72,9 @@ def show_scan_results(results: list[dict], target_version: str):
         elif ver == t("status_not_installed"):
             status = f"[yellow]{t('status_not_installed')}[/yellow]"
             ver_display = f"[yellow]{t('status_not_installed')}[/yellow]"
+        elif ver == t("status_conn_failed"):
+            status = f"[red]{t('status_conn_failed')}[/red]"
+            ver_display = f"[red]{t('status_conn_failed')}[/red]"
         else:
             status = f"[yellow]{t('status_need_update')} → {target_version}[/yellow]"
             ver_display = f"[yellow]{ver}[/yellow]"
