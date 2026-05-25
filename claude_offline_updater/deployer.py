@@ -1,6 +1,7 @@
 """Deployment module (local + remote)"""
 
 import contextlib
+import logging
 import os
 import re
 import shlex
@@ -15,6 +16,9 @@ from .cleaner import cleanup_local_versions, cleanup_old_versions
 from .config import LocalConfig, Settings
 from .display import _prefix, info, success, warn
 from .i18n import t
+
+# Suppress paramiko's noisy transport-level logging
+logging.getLogger("paramiko").setLevel(logging.CRITICAL)
 
 
 def deploy_local(
