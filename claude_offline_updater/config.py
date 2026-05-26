@@ -94,11 +94,7 @@ class Config:
         if path is None:
             path = os.environ.get("CLAUDE_OFFLINE_CONFIG")
             if not path:
-                local_config = Path.cwd() / "config.yaml"
-                if local_config.exists():
-                    path = str(local_config)
-                else:
-                    path = str(cls.default_config_path())
+                path = str(cls.default_config_path())
 
         config_path = Path(path)
         config = cls(
@@ -116,11 +112,7 @@ class Config:
         if path is None:
             path = os.environ.get("CLAUDE_OFFLINE_CONFIG")
             if not path:
-                local_config = Path.cwd() / "config.yaml"
-                if local_config.exists():
-                    path = str(local_config)
-                else:
-                    path = str(cls.default_config_path())
+                path = str(cls.default_config_path())
 
         config_path = Path(path)
         if not config_path.exists():
