@@ -51,3 +51,4 @@ htmlcov/
 Thumbs.db
 desktop.ini
 ehthumbs.db
+claude_offline_updater/_build_info.py
