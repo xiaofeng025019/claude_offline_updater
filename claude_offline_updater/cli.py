@@ -1,7 +1,6 @@
 """Click CLI definitions"""
 
 import sys
-from pathlib import Path
 
 import click
 
@@ -25,8 +24,7 @@ def cli(ctx, config_path, lang):
 
     auto_created = False
     default_path = Config.default_config_path()
-    cwd_has_config = (Path.cwd() / "config.yaml").exists()
-    if config_path is None and not default_path.exists() and not cwd_has_config:
+    if config_path is None and not default_path.exists():
         auto_created = True
 
     try:
