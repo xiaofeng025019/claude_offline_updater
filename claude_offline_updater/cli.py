@@ -4,7 +4,7 @@ import sys
 
 import click
 
-from . import __version__
+from . import __version__, get_version_display
 from .config import DEFAULTS, Config, Machine, _shorten_path
 from .display import console, error, header, info, show_scan_results, success, warn
 from .downloader import DownloadError
@@ -50,7 +50,7 @@ def _interactive_main(ctx):
     """Interactive main menu"""
     import questionary
 
-    header(t("app_title"))
+    header(f"{t('app_title')}  {get_version_display()}")
 
     while True:
         action = questionary.select(
@@ -446,7 +446,7 @@ def _interactive_update(config: Config):
     from .scanner import scan_all
     from .selector import select_machines
 
-    header(t("app_title"))
+    header(f"{t('app_title')}  {get_version_display()}")
 
     try:
         target_version = get_latest_version(config.settings)
@@ -531,7 +531,7 @@ def update(ctx, update_all, machines, target_version, dry_run, no_local):
     from .selector import select_machines
 
     config = ctx.obj["config"]
-    header(t("app_title"))
+    header(f"{t('app_title')}  {get_version_display()}")
 
     if target_version:
         info(f"{t('specify_version')}: {target_version}")
