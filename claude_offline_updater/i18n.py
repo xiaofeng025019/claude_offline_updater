@@ -192,6 +192,8 @@ _T: dict[str, dict[str, str]] = {
     "config_col_m_host":     {"zh": "主机", "en": "Host"},
     "config_col_m_port":     {"zh": "端口", "en": "Port"},
     "config_col_m_user":     {"zh": "用户", "en": "User"},
+    "config_col_m_id":       {"zh": "机器ID", "en": "Machine ID"},
+    "machine_id_saved":      {"zh": "已保存机器ID", "en": "Machine ID saved"},
     "config_edit_prompt":    {"zh": "输入新值（留空保持不变）:", "en": "Enter new value (leave empty to keep):"},
     "config_field_desc":     {
         "zh": "字段说明",

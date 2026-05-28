@@ -49,6 +49,7 @@ class Machine:
     port: int = 22
     user: str = "root"
     tags: list[str] = field(default_factory=list)
+    machine_id: str | None = None
 
 
 @dataclass
@@ -153,6 +154,7 @@ class Config:
                 port=m.get("port", 22),
                 user=m.get("user", "root"),
                 tags=m.get("tags", []),
+                machine_id=m.get("machine_id"),
             ))
 
         return cls(settings=settings, local=local, machines=machines, config_path=config_path)
@@ -188,6 +190,7 @@ class Config:
                     "port": m.port,
                     "user": m.user,
                     **({"tags": m.tags} if m.tags else {}),
+                    **({"machine_id": m.machine_id} if m.machine_id else {}),
                 }
                 for m in self.machines
             ],
@@ -205,6 +208,13 @@ class Config:
         """Find machine by name"""
         for m in self.machines:
             if m.name == name:
+                return m
+        return None
+
+    def find_machine_by_id(self, machine_id: str) -> Machine | None:
+        """Find machine by machine_id"""
+        for m in self.machines:
+            if m.machine_id == machine_id:
                 return m
         return None
 

@@ -7,6 +7,7 @@ import re
 import shlex
 import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 
 import paramiko
 
@@ -43,12 +44,13 @@ def scan_local(local: LocalConfig) -> dict:
         "version": version,
         "tags": ["local"],
         "is_local": True,
+        "machine_id": _read_local_machine_id(),
     }
 
 
 def scan_machine(machine: Machine, settings: Settings) -> dict:
     """Get a single remote machine's Claude Code version"""
-    version = _get_remote_version(machine, settings)
+    version, machine_id = _get_remote_info(machine, settings)
     return {
         "name": machine.name,
         "host": machine.host,
@@ -57,6 +59,7 @@ def scan_machine(machine: Machine, settings: Settings) -> dict:
         "version": version,
         "tags": machine.tags,
         "is_local": False,
+        "machine_id": machine_id or machine.machine_id,
     }
 
 
@@ -89,6 +92,7 @@ def scan_all(machines: list[Machine], settings: Settings,
                         "version": t("status_conn_failed"),
                         "tags": machine.tags,
                         "is_local": False,
+                        "machine_id": machine.machine_id,
                     })
 
     # Sort: local first, remote in original order
@@ -102,8 +106,8 @@ def scan_all(machines: list[Machine], settings: Settings,
     return results
 
 
-def _get_remote_version(machine: Machine, settings: Settings) -> str:
-    """Get remote Claude version via SSH"""
+def _get_remote_info(machine: Machine, settings: Settings) -> tuple[str, str]:
+    """Get remote Claude version and machine-id via SSH"""
     client = None
     try:
         client = paramiko.SSHClient()
@@ -124,21 +128,52 @@ def _get_remote_version(machine: Machine, settings: Settings) -> str:
             timeout=settings.connect_timeout,
         )
 
+        # Get version
+        version = t("status_not_installed")
         stdin, stdout, stderr = client.exec_command(
             f"{shlex.quote(settings.remote_claude_bin)} --version 2>/dev/null",
             timeout=10,
         )
         output = stdout.read().decode().strip()
+        if output:
+            match = re.search(r'(\d+\.\d+\.\d+)', output)
+            if match:
+                version = match.group(1)
 
-        if not output:
-            return t("status_not_installed")
+        # Get machine-id
+        machine_id = _read_remote_machine_id(client)
 
-        match = re.search(r'(\d+\.\d+\.\d+)', output)
-        return match.group(1) if match else t("status_not_installed")
+        return version, machine_id
 
     except Exception:
-        return t("status_conn_failed")
+        return t("status_conn_failed"), ""
     finally:
         if client:
             with contextlib.suppress(Exception):
                 client.close()
+
+
+def _read_remote_machine_id(client: paramiko.SSHClient) -> str:
+    """Read /etc/machine-id from remote machine"""
+    try:
+        stdin, stdout, stderr = client.exec_command(
+            "cat /etc/machine-id 2>/dev/null", timeout=5,
+        )
+        mid = stdout.read().decode().strip()
+        # Validate: should be 32 hex chars
+        if len(mid) == 32 and all(c in "0123456789abcdef" for c in mid):
+            return mid
+    except Exception:
+        pass
+    return ""
+
+
+def _read_local_machine_id() -> str:
+    """Read /etc/machine-id from local machine"""
+    try:
+        mid = Path("/etc/machine-id").read_text().strip()
+        if len(mid) == 32 and all(c in "0123456789abcdef" for c in mid):
+            return mid
+    except Exception:
+        pass
+    return ""
