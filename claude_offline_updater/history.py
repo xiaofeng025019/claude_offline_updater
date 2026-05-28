@@ -1,4 +1,4 @@
-"""JSONL file update history tracking (replaces SQLite to avoid environment dependency issues)"""
+"""JSONL operation log tracking (generalized from update history)"""
 
 import fcntl
 import json
@@ -7,6 +7,16 @@ from datetime import datetime
 from pathlib import Path
 
 HISTORY_PATH = Path.home() / ".local" / "share" / "claude-update" / "history.jsonl"
+
+EVENT_UPDATE = "update"
+EVENT_ADD = "add"
+EVENT_REMOVE = "remove"
+EVENT_RENAME = "rename"
+EVENT_IP_CHANGE = "ip_change"
+EVENT_FIRST_SEEN = "first_seen"
+
+VALID_EVENT_TYPES = (EVENT_UPDATE, EVENT_ADD, EVENT_REMOVE,
+                     EVENT_RENAME, EVENT_IP_CHANGE, EVENT_FIRST_SEEN)
 
 
 def _read_records() -> list[dict]:
@@ -21,7 +31,9 @@ def _read_records() -> list[dict]:
                 line = line.strip()
                 if line:
                     try:
-                        records.append(json.loads(line))
+                        record = json.loads(line)
+                        record.setdefault("event_type", EVENT_UPDATE)
+                        records.append(record)
                     except json.JSONDecodeError:
                         continue
         finally:
@@ -45,6 +57,7 @@ def record_batch(results: list[dict]):
     now = datetime.now().isoformat()
     for r in results:
         _append_record({
+            "event_type": EVENT_UPDATE,
             "timestamp": now,
             "machine_name": r["name"],
             "machine_host": r["host"],
@@ -57,9 +70,33 @@ def record_batch(results: list[dict]):
         })
 
 
+def record_event(event_type: str, machine_name: str, machine_host: str,
+                 machine_id: str = "", **kwargs):
+    """Record a non-update operation event"""
+    if event_type not in VALID_EVENT_TYPES:
+        raise ValueError(f"Invalid event_type: {event_type}")
+    if event_type == EVENT_UPDATE:
+        raise ValueError("Use record_batch() for update events")
+
+    record = {
+        "event_type": event_type,
+        "timestamp": datetime.now().isoformat(),
+        "machine_name": machine_name,
+        "machine_host": machine_host,
+        "machine_id": machine_id,
+    }
+    if event_type == EVENT_RENAME:
+        record["old_name"] = kwargs.get("old_name", "")
+    elif event_type == EVENT_IP_CHANGE:
+        record["old_host"] = kwargs.get("old_host", "")
+
+    _append_record(record)
+
+
 def get_history(machine: str | None = None, host: str | None = None,
-                machine_id: str | None = None, limit: int = 50) -> list[dict]:
-    """Query update history, preferring machine_id for stable identity"""
+                machine_id: str | None = None, event_type: str | None = None,
+                limit: int = 50) -> list[dict]:
+    """Query operation log, preferring machine_id for stable identity"""
     records = _read_records()
 
     if machine_id:
@@ -74,6 +111,9 @@ def get_history(machine: str | None = None, host: str | None = None,
         records = [r for r in records
                    if (machine and r.get("machine_name") == machine)
                    or (host and r.get("machine_host") == host)]
+
+    if event_type:
+        records = [r for r in records if r.get("event_type") == event_type]
 
     # Sort by time descending, take latest limit records
     records.reverse()

@@ -88,7 +88,7 @@ def _interactive_main(ctx):
 
 def _save_machine_ids(config: Config, scan_results: list[dict]):
     """Auto-save discovered machine-ids to config and backfill history"""
-    from .history import backfill_machine_id
+    from .history import EVENT_FIRST_SEEN, backfill_machine_id, record_event
 
     changed = False
     for r in scan_results:
@@ -100,8 +100,9 @@ def _save_machine_ids(config: Config, scan_results: list[dict]):
             machine.machine_id = mid
             changed = True
             info(f"{_prefix(r['name'])}{t('machine_id_saved')}")
-            # Backfill machine_id into old history records
             backfill_machine_id(r["name"], r["host"], mid)
+            record_event(EVENT_FIRST_SEEN, machine_name=machine.name,
+                         machine_host=machine.host, machine_id=mid)
     if changed:
         config.save()
 
@@ -130,7 +131,7 @@ def _interactive_history(ctx):
     """Interactive history"""
     import questionary
 
-    from .display import show_history_table
+    from .display import show_oplog_table
     from .history import get_history
 
     config = ctx.obj["config"]
@@ -138,7 +139,7 @@ def _interactive_history(ctx):
     machine_ids = {m.name: m.machine_id for m in config.machines}
     machine_hosts = {m.name: m.host for m in config.machines}
     filter_choice = questionary.select(
-        t("history_filter"),
+        t("oplog_filter"),
         choices=[t("all_machines")] + machine_names,
     ).ask()
 
@@ -150,12 +151,35 @@ def _interactive_history(ctx):
         machine_id = machine_ids.get(filter_choice)
         machine = filter_choice
         host = machine_hosts.get(filter_choice)
-    records = get_history(machine_id=machine_id, machine=machine, host=host, limit=50)
+
+    # Event type filter
+    type_choices = [
+        t("oplog_type_all"),
+        t("event_update"),
+        t("event_add"),
+        t("event_remove"),
+        t("event_rename"),
+        t("event_ip_change"),
+        t("event_first_seen"),
+    ]
+    type_choice = questionary.select(t("oplog_type_filter"), choices=type_choices).ask()
+    type_map = {
+        t("event_update"): "update",
+        t("event_add"): "add",
+        t("event_remove"): "remove",
+        t("event_rename"): "rename",
+        t("event_ip_change"): "ip_change",
+        t("event_first_seen"): "first_seen",
+    }
+    filter_event_type = type_map.get(type_choice)
+
+    records = get_history(machine_id=machine_id, machine=machine, host=host,
+                          event_type=filter_event_type, limit=50)
 
     if not records:
-        info(t("no_history"))
+        info(t("oplog_no_records"))
     else:
-        show_history_table(records)
+        show_oplog_table(records)
 
 
 def _interactive_config(ctx):
@@ -232,6 +256,8 @@ def _interactive_config(ctx):
         try:
             config.add_machine(machine)
             config.save()
+            from .history import EVENT_ADD, record_event
+            record_event(EVENT_ADD, machine_name=name, machine_host=host)
             success(f"{t('machine_added')}: {name} ({host}:{port})")
         except ValueError as e:
             error(str(e))
@@ -242,9 +268,15 @@ def _interactive_config(ctx):
             info(t("no_machines"))
             return
         name = questionary.select(t("select_remove"), choices=machine_names).ask()
-        if name and config.remove_machine(name):
-            config.save()
-            success(f"{t('machine_removed')}: {name}")
+        if name:
+            m = config.find_machine(name)
+            if config.remove_machine(name):
+                if m:
+                    from .history import EVENT_REMOVE, record_event
+                    record_event(EVENT_REMOVE, machine_name=name,
+                                 machine_host=m.host, machine_id=m.machine_id or "")
+                config.save()
+                success(f"{t('machine_removed')}: {name}")
 
 
 def _edit_settings(config):
@@ -421,6 +453,20 @@ def _edit_machine(config):
                     break
             config.save()
             success(f"{name}.{field}: {old_val} → {new_val}")
+
+            # Record rename / IP change events
+            if field == "name" and old_val != new_val:
+                from .history import EVENT_RENAME, record_event
+                record_event(EVENT_RENAME, machine_name=new_val,
+                             machine_host=machine.host,
+                             machine_id=machine.machine_id or "",
+                             old_name=old_val)
+            elif field == "host" and old_val != new_val:
+                from .history import EVENT_IP_CHANGE, record_event
+                record_event(EVENT_IP_CHANGE, machine_name=machine.name,
+                             machine_host=new_val,
+                             machine_id=machine.machine_id or "",
+                             old_host=old_val)
         except (ValueError, TypeError) as e:
             error(str(e))
 
@@ -627,11 +673,14 @@ def update(ctx, update_all, machines, target_version, dry_run, no_local):
 # ── history subcommand ───────────────────────────────────────────────────────────
 @cli.command()
 @click.option("--machine", "-m", default=None, help="Filter by machine name")
+@click.option("--type", "-t", "event_type", default=None,
+              type=click.Choice(["update", "add", "remove", "rename", "ip_change", "first_seen"]),
+              help="Filter by event type")
 @click.option("--limit", "-n", default=50, help="Number of records")
 @click.pass_context
-def history(ctx, machine, limit):
-    """View update history"""
-    from .display import show_history_table
+def history(ctx, machine, event_type, limit):
+    """View operation log"""
+    from .display import show_oplog_table
     from .history import get_history
 
     config = ctx.obj["config"]
@@ -642,11 +691,12 @@ def history(ctx, machine, limit):
         if m:
             host = m.host
             machine_id = m.machine_id
-    records = get_history(machine_id=machine_id, machine=machine, host=host, limit=limit)
+    records = get_history(machine_id=machine_id, machine=machine, host=host,
+                          event_type=event_type, limit=limit)
     if not records:
-        info(t("no_history"))
+        info(t("oplog_no_records"))
         return
-    show_history_table(records)
+    show_oplog_table(records)
 
 
 # ── config subcommand group ──────────────────────────────────────────────────────
@@ -721,6 +771,8 @@ def config_add_machine(ctx, name, host, port, user):
     try:
         config.add_machine(machine)
         config.save()
+        from .history import EVENT_ADD, record_event
+        record_event(EVENT_ADD, machine_name=name, machine_host=host)
         success(f"{t('machine_added')}: {name} ({host}:{port})")
     except ValueError as e:
         error(str(e))
@@ -732,7 +784,12 @@ def config_add_machine(ctx, name, host, port, user):
 def config_rm_machine(ctx, name):
     """Remove a machine"""
     config = ctx.obj["config"]
+    m = config.find_machine(name)
     if config.remove_machine(name):
+        if m:
+            from .history import EVENT_REMOVE, record_event
+            record_event(EVENT_REMOVE, machine_name=name,
+                         machine_host=m.host, machine_id=m.machine_id or "")
         config.save()
         success(f"{t('machine_removed')}: {name}")
     else:
