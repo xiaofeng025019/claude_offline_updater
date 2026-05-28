@@ -113,13 +113,19 @@ def _interactive_history(ctx):
 
     config = ctx.obj["config"]
     machine_names = [m.name for m in config.machines]
+    machine_hosts = {m.name: m.host for m in config.machines}
     filter_choice = questionary.select(
         t("history_filter"),
         choices=[t("all_machines")] + machine_names,
     ).ask()
 
-    machine = None if filter_choice in (None, t("all_machines")) else filter_choice
-    records = get_history(machine=machine, limit=50)
+    if filter_choice in (None, t("all_machines")):
+        machine = None
+        host = None
+    else:
+        machine = filter_choice
+        host = machine_hosts.get(filter_choice)
+    records = get_history(machine=machine, host=host, limit=50)
 
     if not records:
         info(t("no_history"))
@@ -601,7 +607,13 @@ def history(ctx, machine, limit):
     from .display import show_history_table
     from .history import get_history
 
-    records = get_history(machine=machine, limit=limit)
+    config = ctx.obj["config"]
+    host = None
+    if machine:
+        m = config.find_machine(machine)
+        if m:
+            host = m.host
+    records = get_history(machine=machine, host=host, limit=limit)
     if not records:
         info(t("no_history"))
         return
