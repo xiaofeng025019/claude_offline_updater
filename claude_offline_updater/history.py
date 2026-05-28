@@ -55,12 +55,15 @@ def record_batch(results: list[dict]):
         })
 
 
-def get_history(machine: str | None = None, limit: int = 50) -> list[dict]:
-    """Query update history"""
+def get_history(machine: str | None = None, host: str | None = None,
+                limit: int = 50) -> list[dict]:
+    """Query update history, matching by name and/or host to handle renames"""
     records = _read_records()
 
-    if machine:
-        records = [r for r in records if r.get("machine_name") == machine]
+    if machine or host:
+        records = [r for r in records
+                   if (machine and r.get("machine_name") == machine)
+                   or (host and r.get("machine_host") == host)]
 
     # Sort by time descending, take latest limit records
     records.reverse()
