@@ -152,29 +152,7 @@ def _interactive_history(ctx):
         machine = filter_choice
         host = machine_hosts.get(filter_choice)
 
-    # Event type filter
-    type_choices = [
-        t("oplog_type_all"),
-        t("event_update"),
-        t("event_add"),
-        t("event_remove"),
-        t("event_rename"),
-        t("event_ip_change"),
-        t("event_first_seen"),
-    ]
-    type_choice = questionary.select(t("oplog_type_filter"), choices=type_choices).ask()
-    type_map = {
-        t("event_update"): "update",
-        t("event_add"): "add",
-        t("event_remove"): "remove",
-        t("event_rename"): "rename",
-        t("event_ip_change"): "ip_change",
-        t("event_first_seen"): "first_seen",
-    }
-    filter_event_type = type_map.get(type_choice)
-
-    records = get_history(machine_id=machine_id, machine=machine, host=host,
-                          event_type=filter_event_type, limit=50)
+    records = get_history(machine_id=machine_id, machine=machine, host=host, limit=50)
 
     if not records:
         info(t("oplog_no_records"))
