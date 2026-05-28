@@ -213,8 +213,10 @@ def show_config_panels(config):
     mt.add_column(t("config_col_m_host"), style="white", min_width=18)
     mt.add_column(t("config_col_m_port"), style="white", min_width=6)
     mt.add_column(t("config_col_m_user"), style="white", min_width=8)
+    mt.add_column(t("config_col_m_id"), style="dim", min_width=12)
     for m in config.machines:
-        mt.add_row(m.name, m.host, str(m.port), m.user)
+        mid_display = f"{m.machine_id[:8]}..." if m.machine_id else "-"
+        mt.add_row(m.name, m.host, str(m.port), m.user, mid_display)
 
     console.print()
     console.print(Panel(st, title=t("config_panel_settings"), expand=False))

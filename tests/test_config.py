@@ -15,6 +15,14 @@ class TestMachine:
         m = Machine(name="s1", host="10.0.0.1")
         assert m.tags == []
 
+    def test_default_machine_id(self):
+        m = Machine(name="s1", host="10.0.0.1")
+        assert m.machine_id is None
+
+    def test_machine_id_set(self):
+        m = Machine(name="s1", host="10.0.0.1", machine_id="abc123")
+        assert m.machine_id == "abc123"
+
 
 class TestSettings:
     def test_defaults(self, sample_settings):
@@ -149,6 +157,25 @@ class TestConfigSave:
         assert len(config2.machines) == len(config.machines)
         assert config2.machines[1].port == 2222
 
+    def test_save_machine_id(self, tmp_path):
+        path = tmp_path / "config.yaml"
+        machines = [Machine(name="s1", host="10.0.0.1", machine_id="abc123")]
+        config = Config(settings=Settings(), local=LocalConfig(), machines=machines,
+                        config_path=path)
+        config.save()
+        config2 = Config.load(str(path))
+        assert config2.machines[0].machine_id == "abc123"
+
+    def test_save_machine_id_none_not_written(self, tmp_path):
+        path = tmp_path / "config.yaml"
+        machines = [Machine(name="s1", host="10.0.0.1")]
+        config = Config(settings=Settings(), local=LocalConfig(), machines=machines,
+                        config_path=path)
+        config.save()
+        with open(path) as f:
+            data = yaml.safe_load(f)
+        assert "machine_id" not in data["machines"][0]
+
 
 class TestConfigOperations:
     def test_add_machine(self, tmp_path):
@@ -206,6 +233,23 @@ class TestConfigOperations:
             config_path=tmp_path / "config.yaml",
         )
         assert config.find_machine("ghost") is None
+
+    def test_find_machine_by_id(self, tmp_path):
+        m1 = Machine(name="alpha", host="10.0.0.1", machine_id="aaa111")
+        m2 = Machine(name="beta", host="10.0.0.2", machine_id="bbb222")
+        config = Config(
+            settings=Settings(), local=LocalConfig(), machines=[m1, m2],
+            config_path=tmp_path / "config.yaml",
+        )
+        found = config.find_machine_by_id("bbb222")
+        assert found is m2
+
+    def test_find_machine_by_id_not_found(self, tmp_path):
+        config = Config(
+            settings=Settings(), local=LocalConfig(), machines=[],
+            config_path=tmp_path / "config.yaml",
+        )
+        assert config.find_machine_by_id("nonexistent") is None
 
 
 class TestConfigCreateDefault:
