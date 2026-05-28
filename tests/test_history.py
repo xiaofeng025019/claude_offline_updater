@@ -53,14 +53,16 @@ class TestReadRecords:
 class TestRecordBatch:
     def test_writes_multiple_records(self, history_file):
         results = [
-            {"name": "s1", "host": "10.0.0.1", "to_version": "2.0.0", "status": "success"},
+            {"name": "s1", "host": "10.0.0.1", "to_version": "2.0.0", "status": "success",
+             "machine_id": "aaa111"},
             {"name": "s2", "host": "10.0.0.2", "to_version": "2.0.0", "status": "failed",
-             "detail": "timeout", "duration_seconds": 30},
+             "detail": "timeout", "duration_seconds": 30, "machine_id": "bbb222"},
         ]
         record_batch(results)
         records = _read_records()
         assert len(records) == 2
         assert records[0]["machine_name"] == "s1"
+        assert records[0]["machine_id"] == "aaa111"
         assert records[1]["machine_name"] == "s2"
         assert records[1]["detail"] == "timeout"
 
@@ -100,3 +102,75 @@ class TestGetHistory:
 
     def test_empty_history(self, history_file):
         assert get_history() == []
+
+    def test_machine_id_filter(self, history_file):
+        # Write records with machine_id
+        records = [
+            {"machine_name": "old_name", "machine_host": "10.0.0.1",
+             "machine_id": "abc123", "from_version": "1.0.0", "to_version": "2.0.0",
+             "status": "success", "detail": "", "duration_seconds": 1.0,
+             "timestamp": "2025-01-01T00:00:00"},
+            {"machine_name": "new_name", "machine_host": "10.0.0.99",
+             "machine_id": "abc123", "from_version": "2.0.0", "to_version": "3.0.0",
+             "status": "success", "detail": "", "duration_seconds": 1.0,
+             "timestamp": "2025-01-02T00:00:00"},
+            {"machine_name": "other", "machine_host": "10.0.0.2",
+             "machine_id": "xyz789", "from_version": "1.0.0", "to_version": "2.0.0",
+             "status": "success", "detail": "", "duration_seconds": 1.0,
+             "timestamp": "2025-01-03T00:00:00"},
+        ]
+        with open(history_file, "w") as f:
+            for r in records:
+                f.write(json.dumps(r) + "\n")
+
+        # Filter by machine_id should find both records despite different name/host
+        result = get_history(machine_id="abc123")
+        assert len(result) == 2
+        assert result[0]["machine_name"] == "new_name"
+        assert result[1]["machine_name"] == "old_name"
+
+    def test_machine_id_includes_old_records_without_id(self, history_file):
+        """machine_id query also includes old records without machine_id matching by name/host"""
+        records = [
+            {"machine_name": "public_kfj", "machine_host": "10.0.0.1",
+             "machine_id": "", "from_version": "1.0.0", "to_version": "2.0.0",
+             "status": "success", "detail": "", "duration_seconds": 1.0,
+             "timestamp": "2025-01-01T00:00:00"},
+            {"machine_name": "public_kfj", "machine_host": "10.0.0.1",
+             "machine_id": "abc123", "from_version": "2.0.0", "to_version": "3.0.0",
+             "status": "success", "detail": "", "duration_seconds": 1.0,
+             "timestamp": "2025-01-02T00:00:00"},
+            {"machine_name": "other", "machine_host": "10.0.0.2",
+             "machine_id": "xyz789", "from_version": "1.0.0", "to_version": "2.0.0",
+             "status": "success", "detail": "", "duration_seconds": 1.0,
+             "timestamp": "2025-01-03T00:00:00"},
+        ]
+        with open(history_file, "w") as f:
+            for r in records:
+                f.write(json.dumps(r) + "\n")
+
+        # Should return both: the record with matching machine_id AND the old one without
+        result = get_history(machine_id="abc123", machine="public_kfj", host="10.0.0.1")
+        assert len(result) == 2
+        assert result[0]["to_version"] == "3.0.0"
+        assert result[1]["to_version"] == "2.0.0"
+
+    def test_machine_id_takes_priority_over_name(self, history_file):
+        records = [
+            {"machine_name": "server1", "machine_host": "10.0.0.1",
+             "machine_id": "m1", "from_version": "1.0.0", "to_version": "2.0.0",
+             "status": "success", "detail": "", "duration_seconds": 1.0,
+             "timestamp": "2025-01-01T00:00:00"},
+            {"machine_name": "server1", "machine_host": "10.0.0.2",
+             "machine_id": "m2", "from_version": "1.0.0", "to_version": "2.0.0",
+             "status": "success", "detail": "", "duration_seconds": 1.0,
+             "timestamp": "2025-01-02T00:00:00"},
+        ]
+        with open(history_file, "w") as f:
+            for r in records:
+                f.write(json.dumps(r) + "\n")
+
+        # machine_id=m2 should only match the second record, ignoring name
+        result = get_history(machine_id="m2", machine="server1")
+        assert len(result) == 1
+        assert result[0]["machine_id"] == "m2"

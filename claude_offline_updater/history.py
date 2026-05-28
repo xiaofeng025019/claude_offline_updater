@@ -2,6 +2,7 @@
 
 import fcntl
 import json
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
@@ -47,6 +48,7 @@ def record_batch(results: list[dict]):
             "timestamp": now,
             "machine_name": r["name"],
             "machine_host": r["host"],
+            "machine_id": r.get("machine_id", ""),
             "from_version": r.get("from_version", ""),
             "to_version": r["to_version"],
             "status": r["status"],
@@ -56,11 +58,19 @@ def record_batch(results: list[dict]):
 
 
 def get_history(machine: str | None = None, host: str | None = None,
-                limit: int = 50) -> list[dict]:
-    """Query update history, matching by name and/or host to handle renames"""
+                machine_id: str | None = None, limit: int = 50) -> list[dict]:
+    """Query update history, preferring machine_id for stable identity"""
     records = _read_records()
 
-    if machine or host:
+    if machine_id:
+        # machine_id takes priority — matches across renames and IP changes
+        # Also include old records without machine_id that match by name/host (defensive fallback)
+        records = [r for r in records
+                   if r.get("machine_id") == machine_id
+                   or (not r.get("machine_id")
+                       and ((machine and r.get("machine_name") == machine)
+                            or (host and r.get("machine_host") == host)))]
+    elif machine or host:
         records = [r for r in records
                    if (machine and r.get("machine_name") == machine)
                    or (host and r.get("machine_host") == host)]
@@ -68,3 +78,37 @@ def get_history(machine: str | None = None, host: str | None = None,
     # Sort by time descending, take latest limit records
     records.reverse()
     return records[:limit]
+
+
+def backfill_machine_id(machine_name: str, machine_host: str, machine_id: str):
+    """Fill machine_id into old history records that match by name or host but lack it"""
+    if not machine_id:
+        return
+
+    records = _read_records()
+    changed = False
+    for r in records:
+        if r.get("machine_id"):
+            continue
+        if r.get("machine_name") == machine_name or r.get("machine_host") == machine_host:
+            r["machine_id"] = machine_id
+            changed = True
+
+    if not changed:
+        return
+
+    # Rewrite the file with updated records
+    HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        "w", encoding="utf-8", suffix=".jsonl",
+        dir=HISTORY_PATH.parent, delete=False,
+    ) as tmp:
+        fcntl.flock(tmp, fcntl.LOCK_EX)
+        try:
+            for r in records:
+                tmp.write(json.dumps(r, ensure_ascii=False) + "\n")
+        finally:
+            fcntl.flock(tmp, fcntl.LOCK_UN)
+        tmp_path = tmp.name
+    import os
+    os.replace(tmp_path, HISTORY_PATH)

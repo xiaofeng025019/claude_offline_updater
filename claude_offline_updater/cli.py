@@ -6,7 +6,7 @@ import click
 
 from . import __version__, get_version_display
 from .config import DEFAULTS, Config, Machine, _shorten_path
-from .display import console, error, header, info, show_scan_results, success, warn
+from .display import _prefix, console, error, header, info, show_scan_results, success, warn
 from .downloader import DownloadError
 from .i18n import get_lang, set_lang, t
 
@@ -86,6 +86,26 @@ def _interactive_main(ctx):
             continue
 
 
+def _save_machine_ids(config: Config, scan_results: list[dict]):
+    """Auto-save discovered machine-ids to config and backfill history"""
+    from .history import backfill_machine_id
+
+    changed = False
+    for r in scan_results:
+        mid = r.get("machine_id", "")
+        if not mid:
+            continue
+        machine = config.find_machine(r["name"])
+        if machine and not machine.machine_id:
+            machine.machine_id = mid
+            changed = True
+            info(f"{_prefix(r['name'])}{t('machine_id_saved')}")
+            # Backfill machine_id into old history records
+            backfill_machine_id(r["name"], r["host"], mid)
+    if changed:
+        config.save()
+
+
 def _interactive_scan(ctx):
     """Interactive scan"""
     from .downloader import get_latest_version
@@ -103,6 +123,8 @@ def _interactive_scan(ctx):
     results = scan_all(config.machines, config.settings, local=config.local)
     show_scan_results(results, target_version)
 
+    _save_machine_ids(config, results)
+
 
 def _interactive_history(ctx):
     """Interactive history"""
@@ -113,6 +135,7 @@ def _interactive_history(ctx):
 
     config = ctx.obj["config"]
     machine_names = [m.name for m in config.machines]
+    machine_ids = {m.name: m.machine_id for m in config.machines}
     machine_hosts = {m.name: m.host for m in config.machines}
     filter_choice = questionary.select(
         t("history_filter"),
@@ -120,12 +143,14 @@ def _interactive_history(ctx):
     ).ask()
 
     if filter_choice in (None, t("all_machines")):
+        machine_id = None
         machine = None
         host = None
     else:
+        machine_id = machine_ids.get(filter_choice)
         machine = filter_choice
         host = machine_hosts.get(filter_choice)
-    records = get_history(machine=machine, host=host, limit=50)
+    records = get_history(machine_id=machine_id, machine=machine, host=host, limit=50)
 
     if not records:
         info(t("no_history"))
@@ -465,6 +490,8 @@ def _interactive_update(config: Config):
     scan_results = scan_all(config.machines, config.settings, local=config.local)
     success(t("scan_done"))
 
+    _save_machine_ids(config, scan_results)
+
     selected = select_machines(scan_results, target_version)
     if not selected:
         warn(t("no_selection"))
@@ -609,11 +636,13 @@ def history(ctx, machine, limit):
 
     config = ctx.obj["config"]
     host = None
+    machine_id = None
     if machine:
         m = config.find_machine(machine)
         if m:
             host = m.host
-    records = get_history(machine=machine, host=host, limit=limit)
+            machine_id = m.machine_id
+    records = get_history(machine_id=machine_id, machine=machine, host=host, limit=limit)
     if not records:
         info(t("no_history"))
         return

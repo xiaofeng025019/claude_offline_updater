@@ -37,6 +37,7 @@ def deploy_local(
         "host": result["host"],
         "from_version": current_ver,
         "to_version": target_version,
+        "machine_id": result.get("machine_id", ""),
     }
 
     if current_ver == target_version:
@@ -152,6 +153,7 @@ def deploy_to_machine(
         "host": host,
         "from_version": current_ver,
         "to_version": target_version,
+        "machine_id": result.get("machine_id", ""),
     }
 
     if current_ver == target_version:
@@ -279,6 +281,7 @@ def deploy_all(
             results.append({
                 "name": r["name"], "host": r["host"],
                 "from_version": r["version"], "to_version": target_version,
+                "machine_id": r.get("machine_id", ""),
                 "status": "skipped", "duration_seconds": 0,
             })
         elif local:
@@ -290,6 +293,7 @@ def deploy_all(
             results.append({
                 "name": r["name"], "host": r["host"],
                 "from_version": r["version"], "to_version": target_version,
+                "machine_id": r.get("machine_id", ""),
                 "status": "skipped", "duration_seconds": 0,
             })
 
@@ -311,6 +315,7 @@ def deploy_all(
                     results.append({
                         "name": r["name"], "host": r["host"],
                         "from_version": r["version"], "to_version": target_version,
+                        "machine_id": r.get("machine_id", ""),
                         "status": "failed", "detail": str(e),
                         "duration_seconds": 0,
                     })

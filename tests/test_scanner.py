@@ -1,7 +1,7 @@
 from unittest.mock import MagicMock, patch
 
 from claude_offline_updater.config import Machine
-from claude_offline_updater.scanner import _get_remote_version, scan_all, scan_local, scan_machine
+from claude_offline_updater.scanner import _get_remote_info, scan_all, scan_local, scan_machine
 
 
 class TestScanLocal:
@@ -33,14 +33,15 @@ class TestScanLocal:
 
 
 class TestScanMachine:
-    @patch("claude_offline_updater.scanner._get_remote_version", return_value="2.0.0")
+    @patch("claude_offline_updater.scanner._get_remote_info", return_value=("2.0.0", "abc123"))
     def test_returns_version_from_remote(self, mock_get_ver, sample_settings, sample_machine):
         result = scan_machine(sample_machine, sample_settings)
         assert result["version"] == "2.0.0"
         assert result["name"] == "test-server"
         assert result["is_local"] is False
+        assert result["machine_id"] == "abc123"
 
-    @patch("claude_offline_updater.scanner._get_remote_version", return_value="Not installed")
+    @patch("claude_offline_updater.scanner._get_remote_info", return_value=("Not installed", ""))
     def test_returns_not_installed(self, mock_get_ver, sample_settings, sample_machine):
         result = scan_machine(sample_machine, sample_settings)
         assert result["version"] == "Not installed"
@@ -121,8 +122,8 @@ class TestGetRemoteVersion:
         stdout.read.return_value = b"Claude 3.5.0\n"
         mock_client.exec_command.return_value = (MagicMock(), stdout, MagicMock())
 
-        result = _get_remote_version(self._make_machine(), sample_settings)
-        assert result == "3.5.0"
+        version, machine_id = _get_remote_info(self._make_machine(), sample_settings)
+        assert version == "3.5.0"
 
     @patch("claude_offline_updater.scanner.paramiko.SSHClient")
     def test_returns_not_installed_on_empty_output(self, mock_client_cls, sample_settings):
@@ -132,8 +133,8 @@ class TestGetRemoteVersion:
         stdout.read.return_value = b""
         mock_client.exec_command.return_value = (MagicMock(), stdout, MagicMock())
 
-        result = _get_remote_version(self._make_machine(), sample_settings)
-        assert result == "Not installed"
+        version, machine_id = _get_remote_info(self._make_machine(), sample_settings)
+        assert version == "Not installed"
 
     @patch("claude_offline_updater.scanner.paramiko.SSHClient")
     def test_returns_conn_failed_on_ssh_exception(self, mock_client_cls, sample_settings):
@@ -141,8 +142,8 @@ class TestGetRemoteVersion:
         mock_client_cls.return_value = mock_client
         mock_client.connect.side_effect = Exception("connection refused")
 
-        result = _get_remote_version(self._make_machine(), sample_settings)
-        assert result == "Connection failed"
+        version, machine_id = _get_remote_info(self._make_machine(), sample_settings)
+        assert version == "Connection failed"
 
     @patch("claude_offline_updater.scanner.paramiko.SSHClient")
     def test_client_closed_on_success(self, mock_client_cls, sample_settings):
@@ -152,7 +153,7 @@ class TestGetRemoteVersion:
         stdout.read.return_value = b"1.0.0\n"
         mock_client.exec_command.return_value = (MagicMock(), stdout, MagicMock())
 
-        _get_remote_version(self._make_machine(), sample_settings)
+        _get_remote_info(self._make_machine(), sample_settings)
         mock_client.close.assert_called_once()
 
     @patch("claude_offline_updater.scanner.paramiko.SSHClient")
@@ -161,5 +162,5 @@ class TestGetRemoteVersion:
         mock_client_cls.return_value = mock_client
         mock_client.connect.side_effect = Exception("fail")
 
-        _get_remote_version(self._make_machine(), sample_settings)
+        _get_remote_info(self._make_machine(), sample_settings)
         mock_client.close.assert_called_once()
