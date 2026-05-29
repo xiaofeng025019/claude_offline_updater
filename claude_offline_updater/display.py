@@ -163,6 +163,20 @@ def show_oplog_table(records: list[dict]):
             duration = r.get("duration_seconds")
             duration_str = f"{duration:.1f}s" if duration else "-"
 
+        elif etype == "rollback":
+            status = r.get("status", "")
+            if status == "success":
+                event_str = f"[green]✓[/green] {t('event_rollback')}"
+            elif status == "failed":
+                event_str = f"[red]✗[/red] {t('event_rollback')}"
+            else:
+                event_str = f"[dim]─[/dim] {t('event_rollback')}"
+            from_ver = r.get("from_version", "-")
+            to_ver = r.get("to_version", "")
+            detail_str = f"{from_ver} → {to_ver}" if from_ver and from_ver != "-" else f"→ {to_ver}"
+            duration = r.get("duration_seconds")
+            duration_str = f"{duration:.1f}s" if duration else "-"
+
         elif etype == "add":
             event_str = f"[cyan]{t('event_add')}[/cyan]"
             detail_str = ""
@@ -216,6 +230,8 @@ def show_config_panels(config):
     # ── Global settings panel ──
     settings_rows = [
         ("max_versions", str(s.max_versions), str(DEFAULTS.get("max_versions", ""))),
+        ("max_cache_versions", str(s.max_cache_versions),
+         str(DEFAULTS.get("max_cache_versions", ""))),
         ("platform", s.platform, str(DEFAULTS.get("platform", ""))),
         ("lang", s.lang, str(DEFAULTS.get("lang", ""))),
         ("connect_timeout", f"{s.connect_timeout}s", f"{DEFAULTS.get('connect_timeout', '')}s"),

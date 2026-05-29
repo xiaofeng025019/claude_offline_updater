@@ -58,6 +58,7 @@ def _interactive_main(ctx):
             choices=[
                 questionary.Choice(t("menu_scan"), value="scan"),
                 questionary.Choice(t("menu_update"), value="update"),
+                questionary.Choice(t("menu_rollback"), value="rollback"),
                 questionary.Choice(t("menu_history"), value="history"),
                 questionary.Choice(t("menu_config"), value="config"),
                 questionary.Choice(t("menu_cache"), value="cache"),
@@ -75,6 +76,8 @@ def _interactive_main(ctx):
                 _interactive_scan(ctx)
             elif action == "update":
                 _interactive_update(ctx.obj["config"])
+            elif action == "rollback":
+                _interactive_rollback(ctx)
             elif action == "history":
                 _interactive_history(ctx)
             elif action == "config":
@@ -127,6 +130,128 @@ def _interactive_scan(ctx):
     _save_machine_ids(config, results)
 
 
+def _interactive_rollback(ctx):
+    """Interactive rollback"""
+    import questionary
+
+    from .deployer import rollback_all
+    from .history import get_history, record_rollback
+    from .scanner import list_installed_versions_local, list_installed_versions_remote
+
+    config = ctx.obj["config"]
+    header(t("rollback_title"))
+
+    # Build machine choices
+    machine_choices = []
+    if config.local.enabled:
+        machine_choices.append(questionary.Choice("localhost", value="local"))
+    for m in config.machines:
+        machine_choices.append(questionary.Choice(m.name, value=m.name))
+
+    if not machine_choices:
+        info(t("no_machines"))
+        return
+
+    machine_choice = questionary.select(
+        t("rollback_select_machine"), choices=machine_choices,
+    ).ask()
+    if not machine_choice:
+        return
+
+    # Get current version and installed versions
+    if machine_choice == "local":
+        from .scanner import scan_local
+        scan_result = scan_local(config.local)
+        current_version = scan_result["version"]
+        versions = list_installed_versions_local(config.local)
+        target_machine = None
+    else:
+        target_machine = config.find_machine(machine_choice)
+        if not target_machine:
+            error(f"{t('machine_not_found')}: {machine_choice}")
+            return
+        from .scanner import scan_machine
+        scan_result = scan_machine(target_machine, config.settings)
+        current_version = scan_result["version"]
+        versions = list_installed_versions_remote(target_machine, config.settings)
+
+    # Filter out current version
+    available = [v for v in versions if v != current_version]
+    if not available:
+        info(t("rollback_no_versions"))
+        return
+
+    # Find previous version from history
+    machine_id = scan_result.get("machine_id", "")
+    host = scan_result.get("host", "")
+    history_records = get_history(
+        machine_id=machine_id or None,
+        machine=machine_choice, host=host, limit=50,
+    )
+    prev_version = None
+    for r in history_records:
+        if (r.get("event_type") in ("update", "install", "rollback")
+                and r.get("to_version") == current_version and r.get("from_version")):
+            prev_version = r["from_version"]
+            break
+
+    # Build version choices
+    version_choices = []
+    if prev_version and prev_version in available:
+        version_choices.append(
+            questionary.Choice(t("rollback_to_previous", version=prev_version), value=prev_version))
+    for v in available:
+        version_choices.append(questionary.Choice(v, value=v))
+
+    target_version = questionary.select(
+        t("rollback_select_version"), choices=version_choices,
+    ).ask()
+    if not target_version:
+        return
+
+    if target_version == current_version:
+        info(t("rollback_already"))
+        return
+
+    # Confirm
+    confirm = questionary.confirm(
+        t("rollback_confirm", name=machine_choice, current=current_version, target=target_version),
+        default=False,
+    ).ask()
+    if not confirm:
+        return
+
+    # Execute rollback
+    scan_result["version"] = current_version
+    targets = [scan_result]
+
+    results = rollback_all(
+        targets, target_version, config.settings,
+        local=config.local if machine_choice == "local" else None,
+    )
+
+    for r in results:
+        if r["status"] == "success":
+            record_rollback(
+                machine_name=r["name"], machine_host=r["host"],
+                from_version=r["from_version"], to_version=r["to_version"],
+                status="success", machine_id=r.get("machine_id", ""),
+                duration_seconds=r.get("duration_seconds", 0),
+            )
+        elif r["status"] == "failed":
+            record_rollback(
+                machine_name=r["name"], machine_host=r["host"],
+                from_version=r["from_version"], to_version=r["to_version"],
+                status="failed", machine_id=r.get("machine_id", ""),
+                detail=r.get("detail", ""),
+                duration_seconds=r.get("duration_seconds", 0),
+            )
+            error(f"{t('rollback_failed')}: {r.get('detail', '')}")
+
+    from .display import show_update_results
+    show_update_results(results)
+
+
 def _interactive_history(ctx):
     """Interactive history"""
     import questionary
@@ -138,15 +263,27 @@ def _interactive_history(ctx):
     machine_names = [m.name for m in config.machines]
     machine_ids = {m.name: m.machine_id for m in config.machines}
     machine_hosts = {m.name: m.host for m in config.machines}
+
+    # Include localhost if local is enabled
+    choices = [t("all_machines")]
+    if config.local.enabled:
+        choices.append("localhost")
+    choices += machine_names
+
     filter_choice = questionary.select(
         t("oplog_filter"),
-        choices=[t("all_machines")] + machine_names,
+        choices=choices,
     ).ask()
 
     if filter_choice in (None, t("all_machines")):
         machine_id = None
         machine = None
         host = None
+    elif filter_choice == "localhost":
+        from .scanner import _read_local_machine_id
+        machine_id = _read_local_machine_id()
+        machine = "localhost"
+        host = "127.0.0.1"
     else:
         machine_id = machine_ids.get(filter_choice)
         machine = filter_choice
@@ -264,7 +401,8 @@ def _edit_settings(config):
 
     s = config.settings
     fields = [
-        ("max_versions", str(s.max_versions), str, "3"),
+        ("max_versions", str(s.max_versions), int, "3"),
+        ("max_cache_versions", str(s.max_cache_versions), int, "3"),
         ("connect_timeout", str(s.connect_timeout), int, "10"),
         ("download_timeout", str(s.download_timeout), int, "300"),
         ("max_retries", str(s.max_retries), int, "3"),
@@ -476,15 +614,15 @@ def _interactive_cache(ctx):
     action = questionary.select(
         t("cache_action"),
         choices=[
-            t("cache_clean_keep"),
+            t("cache_clean_keep_n", n=config.settings.max_cache_versions),
             t("cache_clean_all"),
             questionary.Separator(),
             t("config_return"),
         ],
     ).ask()
 
-    if action == t("cache_clean_keep"):
-        clean_cache(config.settings, keep=3)
+    if action == t("cache_clean_keep_n", n=config.settings.max_cache_versions):
+        clean_cache(config.settings)
     elif action == t("cache_clean_all"):
         import shutil
         cache_path = cache_dir(config.settings)
@@ -653,7 +791,7 @@ def update(ctx, update_all, machines, target_version, dry_run, no_local):
 @click.option("--machine", "-m", default=None, help="Filter by machine name")
 @click.option("--type", "-t", "event_type", default=None,
               type=click.Choice([
-                  "update", "install", "add", "remove",
+                  "update", "install", "rollback", "add", "remove",
                   "rename", "ip_change", "first_seen"]),
               help="Filter by event type")
 @click.option("--limit", "-n", default=50, help="Number of records")
@@ -677,6 +815,85 @@ def history(ctx, machine, event_type, limit):
         info(t("oplog_no_records"))
         return
     show_oplog_table(records)
+
+
+# ── rollback subcommand ────────────────────────────────────────────────────────
+@cli.command()
+@click.option("--machine", "-m", default=None, help="Machine name")
+@click.option("--version", "-v", "target_version", default=None,
+              help="Target version to rollback to (default: previous version)")
+@click.option("--all", "rollback_all_flag", is_flag=True, help="Rollback all machines")
+@click.pass_context
+def rollback(ctx, machine, target_version, rollback_all_flag):
+    """Rollback to a previous version"""
+    from .deployer import rollback_all as do_rollback
+    from .history import record_rollback
+    from .scanner import list_installed_versions_remote, scan_machine
+
+    config = ctx.obj["config"]
+    header(t("rollback_title"))
+
+    # Determine which machines to rollback
+    if machine:
+        m = config.find_machine(machine)
+        if not m:
+            error(f"{t('machine_not_found')}: {machine}")
+            sys.exit(1)
+        machines_to_rollback = [m]
+    elif rollback_all_flag:
+        machines_to_rollback = config.machines
+    else:
+        error("Specify --machine or --all")
+        sys.exit(1)
+
+    results = []
+    for m in machines_to_rollback:
+        scan_result = scan_machine(m, config.settings)
+        current_version = scan_result["version"]
+        if not target_version:
+            prev = _find_previous_version(config, m.name, m.host,
+                                          m.machine_id or "")
+            if not prev:
+                error(f"{t('rollback_no_versions')}: {m.name}")
+                continue
+            target_ver = prev
+        else:
+            target_ver = target_version
+
+        available = list_installed_versions_remote(m, config.settings)
+        if target_ver not in available:
+            error(f"Version {target_ver} not found on {m.name}")
+            continue
+
+        scan_result["version"] = current_version
+        r = do_rollback([scan_result], target_ver, config.settings)
+        results.extend(r)
+
+    # Record rollback events
+    for r in results:
+        if r["status"] in ("success", "failed"):
+            record_rollback(
+                machine_name=r["name"], machine_host=r["host"],
+                from_version=r["from_version"], to_version=r["to_version"],
+                status=r["status"], machine_id=r.get("machine_id", ""),
+                detail=r.get("detail", ""),
+                duration_seconds=r.get("duration_seconds", 0),
+            )
+
+    from .display import show_update_results
+    show_update_results(results)
+
+
+def _find_previous_version(config, name, host, machine_id):
+    """Find the previous version from history for a given machine"""
+    from .history import get_history
+    records = get_history(
+        machine_id=machine_id or None, machine=name, host=host, limit=50,
+    )
+    for r in records:
+        if r.get("event_type") in ("update", "install", "rollback") and r.get("to_version"):
+            return r.get("from_version", "")
+    return None
 
 
 # ── config subcommand group ──────────────────────────────────────────────────────
@@ -816,7 +1033,8 @@ def cache_list(ctx):
 
 
 @cache.command("clean")
-@click.option("--keep", "-k", default=3, help="Keep latest N versions")
+@click.option("--keep", "-k", default=None, type=int,
+              help="Keep latest N versions (default: from config)")
 @click.option("--all", "clean_all", is_flag=True, help="Clear all cache")
 @click.pass_context
 def cache_clean(ctx, keep, clean_all):

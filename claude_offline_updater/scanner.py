@@ -177,3 +177,66 @@ def _read_local_machine_id() -> str:
     except Exception:
         pass
     return ""
+
+
+def list_installed_versions_local(local: LocalConfig) -> list[str]:
+    """List installed Claude versions on local machine, newest first"""
+    versions_dir = os.path.expanduser(local.versions_dir)
+    if not os.path.isdir(versions_dir):
+        return []
+    versions = []
+    for name in os.listdir(versions_dir):
+        path = os.path.join(versions_dir, name)
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            versions.append(name)
+    versions.sort(key=_version_key, reverse=True)
+    return versions
+
+
+def list_installed_versions_remote(machine: Machine, settings: Settings) -> list[str]:
+    """List installed Claude versions on remote machine, newest first"""
+    client = None
+    try:
+        client = paramiko.SSHClient()
+        client.load_system_host_keys()
+        with contextlib.suppress(FileNotFoundError):
+            client.load_host_keys(os.path.expanduser("~/.ssh/known_hosts"))
+        policy = settings.ssh_host_key_policy
+        if policy == "auto":
+            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        elif policy == "reject":
+            client.set_missing_host_key_policy(paramiko.RejectPolicy())
+        else:
+            client.set_missing_host_key_policy(paramiko.WarningPolicy())
+        client.connect(
+            machine.host, port=machine.port, username=machine.user,
+            timeout=settings.connect_timeout,
+        )
+        vdir = shlex.quote(settings.remote_versions_dir)
+        stdin, stdout, stderr = client.exec_command(
+            f"ls -1 {vdir}/ 2>/dev/null", timeout=10,
+        )
+        output = stdout.read().decode().strip()
+        if not output:
+            return []
+        versions = [v for v in output.splitlines() if v.strip()]
+        versions.sort(key=_version_key, reverse=True)
+        return versions
+    except Exception:
+        return []
+    finally:
+        if client:
+            with contextlib.suppress(Exception):
+                client.close()
+
+
+def _version_key(v: str) -> tuple:
+    """Parse version string into sortable tuple"""
+    parts = v.split(".")
+    result = []
+    for p in parts:
+        try:
+            result.append(int(p))
+        except ValueError:
+            result.append(0)
+    return tuple(result)

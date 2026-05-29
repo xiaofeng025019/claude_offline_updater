@@ -487,3 +487,208 @@ def _set_install_method_local():
         info(f"{_prefix('localhost')}{t('install_method_set')}")
     except Exception as e:
         warn(f"{_prefix('localhost')}{t('install_method_set_failed')}: {e}")
+
+
+# ── Rollback ─────────────────────────────────────────────────────────────────
+
+def rollback_local(
+    current_version: str,
+    target_version: str,
+    local: LocalConfig,
+    settings: Settings,
+    machine_id: str = "",
+) -> dict:
+    """Rollback local machine to a previous version"""
+    start_time = time.time()
+    name = "localhost"
+    base_result = {
+        "name": name, "host": "127.0.0.1",
+        "from_version": current_version, "to_version": target_version,
+        "machine_id": machine_id,
+    }
+
+    if current_version == target_version:
+        return {**base_result, "status": "skipped", "duration_seconds": 0}
+
+    claude_bin = os.path.expanduser(local.claude_bin)
+    versions_dir = os.path.expanduser(local.versions_dir)
+    target_path = os.path.join(versions_dir, target_version)
+
+    # Verify target binary exists
+    if not os.path.isfile(target_path) or not os.access(target_path, os.X_OK):
+        return {**base_result, "status": "failed",
+                "detail": f"Version {target_version} not found in {versions_dir}",
+                "duration_seconds": time.time() - start_time}
+
+    # Replace symlink atomically via ln -sf
+    try:
+        subprocess.run(
+            ["ln", "-sf", target_path, claude_bin],
+            check=True, capture_output=True, timeout=10,
+        )
+    except Exception as e:
+        return {**base_result, "status": "failed",
+                "detail": str(e),
+                "duration_seconds": time.time() - start_time}
+
+    # Verify version
+    try:
+        proc = subprocess.run(
+            [claude_bin, "--version"],
+            capture_output=True, text=True, timeout=10,
+        )
+        match = re.search(r'(\d+\.\d+\.\d+)', proc.stdout)
+        installed_ver = match.group(1) if match else ""
+
+        if installed_ver != target_version:
+            # Revert symlink back
+            old_path = os.path.join(versions_dir, current_version)
+            if os.path.isfile(old_path):
+                subprocess.run(
+                    ["ln", "-sf", old_path, claude_bin],
+                    capture_output=True, timeout=10,
+                )
+            return {**base_result, "status": "failed",
+                    "detail": f"{t('version_verify_fail')}: {installed_ver}",
+                    "duration_seconds": time.time() - start_time}
+    except Exception as e:
+        return {**base_result, "status": "failed",
+                "detail": str(e),
+                "duration_seconds": time.time() - start_time}
+
+    success(f"{_prefix(name)}{t('rollback_success')}: {current_version} → {target_version}")
+    return {**base_result, "status": "success",
+            "duration_seconds": time.time() - start_time}
+
+
+def rollback_to_machine(
+    machine_result: dict,
+    target_version: str,
+    settings: Settings,
+) -> dict:
+    """Rollback a remote machine to a previous version"""
+    name = machine_result["name"]
+    host = machine_result["host"]
+    port = machine_result["port"]
+    user = machine_result["user"]
+    current_version = machine_result["version"]
+    machine_id = machine_result.get("machine_id", "")
+    start_time = time.time()
+
+    base_result = {
+        "name": name, "host": host,
+        "from_version": current_version, "to_version": target_version,
+        "machine_id": machine_id,
+    }
+
+    if current_version == target_version:
+        return {**base_result, "status": "skipped", "duration_seconds": 0}
+
+    client = None
+    try:
+        client = _ssh_connect(host, port, user, settings)
+
+        vdir = shlex.quote(settings.remote_versions_dir)
+        cbin = shlex.quote(settings.remote_claude_bin)
+        tver = shlex.quote(target_version)
+
+        # Verify target binary exists on remote
+        stdin, stdout, stderr = client.exec_command(
+            f"test -x {vdir}/{tver} && echo ok || echo missing", timeout=10,
+        )
+        check = stdout.read().decode().strip()
+        if check != "ok":
+            return {**base_result, "status": "failed",
+                    "detail": f"Version {target_version} not found on remote",
+                    "duration_seconds": time.time() - start_time}
+
+        # Replace symlink
+        client.exec_command(
+            f"ln -sf {vdir}/{tver} {cbin}", timeout=10,
+        )
+
+        # Verify
+        import time as _time
+        _time.sleep(0.5)
+        stdin, stdout, stderr = client.exec_command(
+            f"{cbin} --version 2>/dev/null", timeout=10,
+        )
+        output = stdout.read().decode().strip()
+        match = re.search(r'(\d+\.\d+\.\d+)', output)
+        installed_ver = match.group(1) if match else ""
+
+        if installed_ver != target_version:
+            # Revert
+            cur_ver = shlex.quote(current_version)
+            client.exec_command(
+                f"ln -sf {vdir}/{cur_ver} {cbin}", timeout=10,
+            )
+            return {**base_result, "status": "failed",
+                    "detail": f"{t('version_verify_fail')}: {installed_ver}",
+                    "duration_seconds": time.time() - start_time}
+
+        success(f"{_prefix(name)}{t('rollback_success')}: {current_version} → {target_version}")
+        return {**base_result, "status": "success",
+                "duration_seconds": time.time() - start_time}
+
+    except Exception as e:
+        return {**base_result, "status": "failed",
+                "detail": str(e),
+                "duration_seconds": time.time() - start_time}
+    finally:
+        if client:
+            client.close()
+
+
+def rollback_all(
+    targets: list[dict],
+    target_version: str,
+    settings: Settings,
+    local: LocalConfig | None = None,
+) -> list[dict]:
+    """Rollback all selected machines"""
+    results = []
+    local_items = [r for r in targets if r.get("is_local")]
+    remote_items = [r for r in targets if not r.get("is_local")]
+
+    for r in local_items:
+        if local:
+            results.append(rollback_local(
+                r["version"], target_version, local, settings,
+                machine_id=r.get("machine_id", ""),
+            ))
+        else:
+            results.append({
+                "name": r["name"], "host": r["host"],
+                "from_version": r["version"], "to_version": target_version,
+                "machine_id": r.get("machine_id", ""),
+                "status": "skipped", "duration_seconds": 0,
+            })
+
+    if remote_items:
+        with ThreadPoolExecutor(max_workers=min(settings.max_workers, len(remote_items))) as pool:
+            futures = {
+                pool.submit(rollback_to_machine, r, target_version, settings): r
+                for r in remote_items
+            }
+            for future in as_completed(futures):
+                try:
+                    results.append(future.result())
+                except Exception as e:
+                    r = futures[future]
+                    results.append({
+                        "name": r["name"], "host": r["host"],
+                        "from_version": r["version"], "to_version": target_version,
+                        "machine_id": r.get("machine_id", ""),
+                        "status": "failed", "detail": str(e),
+                        "duration_seconds": 0,
+                    })
+
+    def sort_key(r):
+        if r.get("is_local"):
+            return (0, 0)
+        name_order = {r2["name"]: i + 1 for i, r2 in enumerate(targets)}
+        return (1, name_order.get(r["name"], 999))
+
+    results.sort(key=sort_key)
+    return results
