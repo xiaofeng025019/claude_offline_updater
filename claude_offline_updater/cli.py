@@ -263,15 +263,27 @@ def _interactive_history(ctx):
     machine_names = [m.name for m in config.machines]
     machine_ids = {m.name: m.machine_id for m in config.machines}
     machine_hosts = {m.name: m.host for m in config.machines}
+
+    # Include localhost if local is enabled
+    choices = [t("all_machines")]
+    if config.local.enabled:
+        choices.append("localhost")
+    choices += machine_names
+
     filter_choice = questionary.select(
         t("oplog_filter"),
-        choices=[t("all_machines")] + machine_names,
+        choices=choices,
     ).ask()
 
     if filter_choice in (None, t("all_machines")):
         machine_id = None
         machine = None
         host = None
+    elif filter_choice == "localhost":
+        from .scanner import _read_local_machine_id
+        machine_id = _read_local_machine_id()
+        machine = "localhost"
+        host = "127.0.0.1"
     else:
         machine_id = machine_ids.get(filter_choice)
         machine = filter_choice

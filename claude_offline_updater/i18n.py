@@ -163,7 +163,7 @@ _T: dict[str, dict[str, str]] = {
     "oplog_type_filter":     {"zh": "筛选事件类型:", "en": "Filter event type:"},
 
     # ── Rollback ──────────────────────────────────────────────────────────
-    "menu_rollback":         {"zh": "回退版本", "en": "Rollback version"},
+    "menu_rollback":         {"zh": "回退Claude版本", "en": "Rollback Claude version"},
     "rollback_title":        {"zh": "回退版本", "en": "Rollback Version"},
     "rollback_select_machine": {"zh": "选择要回退的机器:", "en": "Select machine to rollback:"},
     "rollback_select_version": {"zh": "选择回退目标版本:", "en": "Select target version:"},
