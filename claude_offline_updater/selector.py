@@ -1,6 +1,7 @@
 """Interactive machine selection (questionary)"""
 
 import questionary
+from prompt_toolkit.keys import Keys
 from rich.table import Table
 
 from .display import console
@@ -41,24 +42,28 @@ def select_machines(scan_results: list[dict], target_version: str) -> list[dict]
     # Display version info table
     _show_preview_table(scan_results, target_version)
 
-    # Multi-select
-    selected = questionary.checkbox(
+    # Multi-select (with ESC bound)
+    q = questionary.checkbox(
         t("select_prompt"),
         choices=choices,
-    ).ask()
+    )
+    kb = q.application.key_bindings
 
+    @kb.add(Keys.Escape, eager=True)
+    def _on_esc(event):
+        event.app.exit(exception=KeyboardInterrupt, style="class:aborting")
+
+    selected = q.ask()
+
+    # ESC or no selection → go back
     if selected is None:
         return []
 
-    # Check if user actively selected 'Back' (not triggered by select-all)
-    back_selected = _BACK_VALUE in selected
-    machines = [s for s in selected if s != _BACK_VALUE]
-
-    # If only 'Back' is selected (no machines), treat as going back
-    if back_selected and not machines:
+    # If user selected '← 返回' at all → go back regardless of other selections
+    if _BACK_VALUE in selected:
         return []
 
-    return machines
+    return selected
 
 
 def _show_preview_table(results: list[dict], target_version: str):
