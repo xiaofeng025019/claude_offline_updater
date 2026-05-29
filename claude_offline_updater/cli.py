@@ -182,10 +182,13 @@ def _interactive_rollback(ctx):
         info(t("no_machines"))
         return
 
+    machine_choices.append(questionary.Separator())
+    machine_choices.append(questionary.Choice(t("config_return"), value="__back__"))
+
     machine_choice = _select(
         t("rollback_select_machine"), choices=machine_choices,
     ).ask()
-    if not machine_choice:
+    if not machine_choice or machine_choice == "__back__":
         return
 
     # Get current version and installed versions
@@ -233,10 +236,13 @@ def _interactive_rollback(ctx):
     for v in available:
         version_choices.append(questionary.Choice(v, value=v))
 
+    version_choices.append(questionary.Separator())
+    version_choices.append(questionary.Choice(t("config_return"), value="__back__"))
+
     target_version = _select(
         t("rollback_select_version"), choices=version_choices,
     ).ask()
-    if not target_version:
+    if not target_version or target_version == "__back__":
         return
 
     if target_version == current_version:
@@ -284,6 +290,8 @@ def _interactive_rollback(ctx):
 
 def _interactive_history(ctx):
     """Interactive history"""
+    import questionary
+
     from .display import show_oplog_table
     from .history import get_history
 
@@ -297,13 +305,15 @@ def _interactive_history(ctx):
     if config.local.enabled:
         choices.append("localhost")
     choices += machine_names
+    choices.append(questionary.Separator())
+    choices.append(questionary.Choice(t("config_return"), value="__back__"))
 
     filter_choice = _select(
         t("oplog_filter"),
         choices=choices,
     ).ask()
 
-    if filter_choice is None:
+    if filter_choice is None or filter_choice == "__back__":
         return
     elif filter_choice == t("all_machines"):
         machine_id = None
@@ -374,10 +384,12 @@ def _interactive_config(ctx):
                 choices=[
                     questionary.Choice(f"{t('lang_zh')} (zh)", value="zh"),
                     questionary.Choice(f"{t('lang_en')} (en)", value="en"),
+                    questionary.Separator(),
+                    questionary.Choice(t("config_return"), value="__back__"),
                 ],
             ).ask()
 
-            if lang_choice and lang_choice != current:
+            if lang_choice and lang_choice != "__back__" and lang_choice != current:
                 set_lang(lang_choice)
                 config.settings.lang = lang_choice
                 config.save()
@@ -417,8 +429,12 @@ def _interactive_config(ctx):
             if not machine_names:
                 info(t("no_machines"))
                 continue
-            name = _select(t("select_remove"), choices=machine_names).ask()
-            if name:
+            remove_choices = machine_names + [
+                questionary.Separator(),
+                questionary.Choice(t("config_return"), value="__back__"),
+            ]
+            name = _select(t("select_remove"), choices=remove_choices).ask()
+            if name and name != "__back__":
                 m = config.find_machine(name)
                 if config.remove_machine(name):
                     if m:
@@ -553,8 +569,10 @@ def _edit_machine(config):
         return
 
     machine_names = [m.name for m in config.machines]
+    machine_names.append(questionary.Separator())
+    machine_names.append(questionary.Choice(t("config_return"), value="__back__"))
     name = _select(t("select_edit_machine"), choices=machine_names).ask()
-    if not name:
+    if not name or name == "__back__":
         return
 
     machine = config.find_machine(name)

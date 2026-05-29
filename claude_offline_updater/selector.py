@@ -1,6 +1,7 @@
 """Interactive machine selection (questionary)"""
 
 import questionary
+from prompt_toolkit.keys import Keys
 from rich.table import Table
 
 from .display import console
@@ -41,11 +42,18 @@ def select_machines(scan_results: list[dict], target_version: str) -> list[dict]
     # Display version info table
     _show_preview_table(scan_results, target_version)
 
-    # Multi-select
-    selected = questionary.checkbox(
+    # Multi-select (with ESC bound)
+    q = questionary.checkbox(
         t("select_prompt"),
         choices=choices,
-    ).ask()
+    )
+    kb = q.application.key_bindings
+
+    @kb.add(Keys.Escape, eager=True)
+    def _on_esc(event):
+        event.app.exit(exception=KeyboardInterrupt, style="class:aborting")
+
+    selected = q.ask()
 
     if selected is None:
         return []
