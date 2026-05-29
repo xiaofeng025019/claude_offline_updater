@@ -2,6 +2,7 @@
 
 import fcntl
 import json
+import os
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -97,7 +98,8 @@ def record_rollback(machine_name: str, machine_host: str,
 
 
 def record_event(event_type: str, machine_name: str, machine_host: str,
-                 machine_id: str = "", **kwargs):
+                 machine_id: str = "", *, old_name: str = "",
+                 old_host: str = ""):
     """Record a non-update operation event"""
     if event_type not in VALID_EVENT_TYPES:
         raise ValueError(f"Invalid event_type: {event_type}")
@@ -107,18 +109,22 @@ def record_event(event_type: str, machine_name: str, machine_host: str,
         raise ValueError("Use record_batch() for install events")
     if event_type == EVENT_ROLLBACK:
         raise ValueError("Use record_rollback() for rollback events")
+    if event_type == EVENT_RENAME and not old_name:
+        raise ValueError("record_event(EVENT_RENAME, ...) requires old_name=")
+    if event_type == EVENT_IP_CHANGE and not old_host:
+        raise ValueError("record_event(EVENT_IP_CHANGE, ...) requires old_host=")
 
     record = {
         "event_type": event_type,
         "timestamp": datetime.now().isoformat(),
         "machine_name": machine_name,
         "machine_host": machine_host,
-        "machine_id": machine_id,
+        "machine_id": machine_id or "",
     }
     if event_type == EVENT_RENAME:
-        record["old_name"] = kwargs.get("old_name", "")
+        record["old_name"] = old_name
     elif event_type == EVENT_IP_CHANGE:
-        record["old_host"] = kwargs.get("old_host", "")
+        record["old_host"] = old_host
 
     _append_record(record)
 
@@ -169,19 +175,20 @@ def backfill_machine_id(machine_name: str, machine_host: str, machine_id: str):
 
     # Rewrite the file with updated records
     HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(
-        "w", encoding="utf-8", suffix=".jsonl",
-        dir=HISTORY_PATH.parent, delete=False,
-    ) as tmp:
-        fcntl.flock(tmp, fcntl.LOCK_EX)
+    # Lock HISTORY_PATH (not the temp file) so concurrent _append_record blocks
+    with open(HISTORY_PATH, "a", encoding="utf-8") as lockf:
+        fcntl.flock(lockf, fcntl.LOCK_EX)
         try:
-            for r in records:
-                tmp.write(json.dumps(r, ensure_ascii=False) + "\n")
+            with tempfile.NamedTemporaryFile(
+                "w", encoding="utf-8", suffix=".jsonl",
+                dir=HISTORY_PATH.parent, delete=False,
+            ) as tmp:
+                for r in records:
+                    tmp.write(json.dumps(r, ensure_ascii=False) + "\n")
+                tmp_path = tmp.name
+            os.replace(tmp_path, HISTORY_PATH)
         finally:
-            fcntl.flock(tmp, fcntl.LOCK_UN)
-        tmp_path = tmp.name
-    import os
-    os.replace(tmp_path, HISTORY_PATH)
+            fcntl.flock(lockf, fcntl.LOCK_UN)
 
 
 def backfill_events():
@@ -191,12 +198,15 @@ def backfill_events():
         return
 
     # Build set of existing non-update events to avoid duplicates
+    # Key on (event_type, timestamp, machine_id) to avoid false-positive suppression
+    # when multiple machines share a timestamp
     existing_events = set()
     for r in records:
         if r.get("event_type") != EVENT_UPDATE:
             etype = r["event_type"]
             ts = r["timestamp"]
-            existing_events.add((etype, ts))
+            mid = r.get("machine_id") or ""
+            existing_events.add((etype, ts, mid))
 
     new_events = []
 
@@ -216,7 +226,7 @@ def backfill_events():
             name = r["machine_name"]
             if prev_name is not None and name != prev_name and name not in seen_names:
                 # Name changed at this point
-                event_key = (EVENT_RENAME, r["timestamp"])
+                event_key = (EVENT_RENAME, r["timestamp"], r.get("machine_id") or "")
                 if event_key not in existing_events:
                     new_events.append({
                         "event_type": EVENT_RENAME,
@@ -262,16 +272,17 @@ def backfill_events():
     all_records.sort(key=lambda x: x["timestamp"])
 
     HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(
-        "w", encoding="utf-8", suffix=".jsonl",
-        dir=HISTORY_PATH.parent, delete=False,
-    ) as tmp:
-        fcntl.flock(tmp, fcntl.LOCK_EX)
+    # Lock HISTORY_PATH (not the temp file) so concurrent _append_record blocks
+    with open(HISTORY_PATH, "a", encoding="utf-8") as lockf:
+        fcntl.flock(lockf, fcntl.LOCK_EX)
         try:
-            for r in all_records:
-                tmp.write(json.dumps(r, ensure_ascii=False) + "\n")
+            with tempfile.NamedTemporaryFile(
+                "w", encoding="utf-8", suffix=".jsonl",
+                dir=HISTORY_PATH.parent, delete=False,
+            ) as tmp:
+                for r in all_records:
+                    tmp.write(json.dumps(r, ensure_ascii=False) + "\n")
+                tmp_path = tmp.name
+            os.replace(tmp_path, HISTORY_PATH)
         finally:
-            fcntl.flock(tmp, fcntl.LOCK_UN)
-        tmp_path = tmp.name
-    import os
-    os.replace(tmp_path, HISTORY_PATH)
+            fcntl.flock(lockf, fcntl.LOCK_UN)
