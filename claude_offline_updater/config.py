@@ -11,6 +11,7 @@ from .i18n import t
 
 DEFAULTS = {
     "max_versions": 3,
+    "max_cache_versions": 3,
     "remote_claude_bin": "~/.local/bin/claude",
     "remote_versions_dir": "~/.local/share/claude/versions",
     "remote_tmp_dir": "/tmp/claude-update",
@@ -62,6 +63,7 @@ class LocalConfig:
 @dataclass
 class Settings:
     max_versions: int = 3
+    max_cache_versions: int = 3
     remote_claude_bin: str = "~/.local/bin/claude"
     remote_versions_dir: str = "~/.local/share/claude/versions"
     remote_tmp_dir: str = "/tmp/claude-update"
@@ -164,6 +166,7 @@ class Config:
         data = {
             "settings": {
                 "max_versions": self.settings.max_versions,
+                "max_cache_versions": self.settings.max_cache_versions,
                 "remote_claude_bin": _shorten_path(self.settings.remote_claude_bin),
                 "remote_versions_dir": _shorten_path(self.settings.remote_versions_dir),
                 "remote_tmp_dir": self.settings.remote_tmp_dir,

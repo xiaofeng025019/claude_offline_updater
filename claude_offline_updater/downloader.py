@@ -68,8 +68,10 @@ def list_cache(settings: Settings) -> list[dict]:
     return results
 
 
-def clean_cache(settings: Settings, keep: int = 3):
+def clean_cache(settings: Settings, keep: int | None = None):
     """Clean local cache, keep only the latest N versions"""
+    if keep is None:
+        keep = settings.max_cache_versions
     entries = list_cache(settings)
     if len(entries) <= keep:
         return
@@ -144,7 +146,7 @@ def download_binary(settings: Settings, version: str, output_path: str):
                 cache_target = _cache_path(settings, version)
                 shutil.copy2(output_path, cache_target)
                 info(f"{t('cached_to')}: {cache_target}")
-                clean_cache(settings, keep=3)
+                clean_cache(settings)
                 return
             error(t("download_empty"))
         except Exception as e:

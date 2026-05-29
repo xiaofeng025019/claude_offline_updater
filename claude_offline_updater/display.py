@@ -230,6 +230,8 @@ def show_config_panels(config):
     # ── Global settings panel ──
     settings_rows = [
         ("max_versions", str(s.max_versions), str(DEFAULTS.get("max_versions", ""))),
+        ("max_cache_versions", str(s.max_cache_versions),
+         str(DEFAULTS.get("max_cache_versions", ""))),
         ("platform", s.platform, str(DEFAULTS.get("platform", ""))),
         ("lang", s.lang, str(DEFAULTS.get("lang", ""))),
         ("connect_timeout", f"{s.connect_timeout}s", f"{DEFAULTS.get('connect_timeout', '')}s"),
