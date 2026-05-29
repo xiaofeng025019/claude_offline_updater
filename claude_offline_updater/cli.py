@@ -3,12 +3,42 @@
 import sys
 
 import click
+from prompt_toolkit.keys import Keys
 
 from . import __version__, get_version_display
 from .config import DEFAULTS, Config, Machine, _shorten_path
 from .display import _prefix, console, error, header, info, show_scan_results, success, warn
 from .downloader import DownloadError
 from .i18n import get_lang, set_lang, t
+
+
+def _bind_esc(question):
+    """Add ESC key binding to a questionary Question, making ESC behave like Ctrl+C."""
+    kb = question.application.key_bindings
+
+    @kb.add(Keys.Escape, eager=True)
+    def _on_esc(event):
+        event.app.exit(exception=KeyboardInterrupt, style="class:aborting")
+
+    return question
+
+
+def _select(message, **kwargs):
+    """questionary.select with ESC key bound (ESC returns None)"""
+    import questionary
+    return _bind_esc(questionary.select(message, **kwargs))
+
+
+def _confirm(message, **kwargs):
+    """questionary.confirm with ESC key bound (ESC returns None)"""
+    import questionary
+    return _bind_esc(questionary.confirm(message, **kwargs))
+
+
+def _text(message, **kwargs):
+    """questionary.text with ESC key bound (ESC returns None)"""
+    import questionary
+    return _bind_esc(questionary.text(message, **kwargs))
 
 
 @click.group(invoke_without_command=True)
@@ -53,7 +83,7 @@ def _interactive_main(ctx):
     header(f"{t('app_title')}  {get_version_display()}")
 
     while True:
-        action = questionary.select(
+        action = _select(
             t("menu_prompt"),
             choices=[
                 questionary.Choice(t("menu_scan"), value="scan"),
@@ -152,10 +182,13 @@ def _interactive_rollback(ctx):
         info(t("no_machines"))
         return
 
-    machine_choice = questionary.select(
+    machine_choices.append(questionary.Separator())
+    machine_choices.append(questionary.Choice(t("config_return"), value="__back__"))
+
+    machine_choice = _select(
         t("rollback_select_machine"), choices=machine_choices,
     ).ask()
-    if not machine_choice:
+    if not machine_choice or machine_choice == "__back__":
         return
 
     # Get current version and installed versions
@@ -203,10 +236,13 @@ def _interactive_rollback(ctx):
     for v in available:
         version_choices.append(questionary.Choice(v, value=v))
 
-    target_version = questionary.select(
+    version_choices.append(questionary.Separator())
+    version_choices.append(questionary.Choice(t("config_return"), value="__back__"))
+
+    target_version = _select(
         t("rollback_select_version"), choices=version_choices,
     ).ask()
-    if not target_version:
+    if not target_version or target_version == "__back__":
         return
 
     if target_version == current_version:
@@ -214,7 +250,7 @@ def _interactive_rollback(ctx):
         return
 
     # Confirm
-    confirm = questionary.confirm(
+    confirm = _confirm(
         t("rollback_confirm", name=machine_choice, current=current_version, target=target_version),
         default=False,
     ).ask()
@@ -269,13 +305,17 @@ def _interactive_history(ctx):
     if config.local.enabled:
         choices.append("localhost")
     choices += machine_names
+    choices.append(questionary.Separator())
+    choices.append(questionary.Choice(t("config_return"), value="__back__"))
 
-    filter_choice = questionary.select(
+    filter_choice = _select(
         t("oplog_filter"),
         choices=choices,
     ).ask()
 
-    if filter_choice in (None, t("all_machines")):
+    if filter_choice is None or filter_choice == "__back__":
+        return
+    elif filter_choice == t("all_machines"):
         machine_id = None
         machine = None
         host = None
@@ -304,94 +344,105 @@ def _interactive_config(ctx):
     from .display import show_config_panels
 
     config = ctx.obj["config"]
-    show_config_panels(config)
 
-    action = questionary.select(
-        t("config_action"),
-        choices=[
-            t("config_edit_settings"),
-            t("config_edit_local"),
-            t("config_edit_machine"),
-            t("config_add"),
-            t("config_remove"),
-            t("config_set_lang"),
-            questionary.Separator(),
-            t("config_return"),
-        ],
-    ).ask()
+    while True:
+        show_config_panels(config)
 
-    if action == t("config_edit_settings"):
-        _edit_settings(config)
-
-    elif action == t("config_edit_local"):
-        _edit_local(config)
-
-    elif action == t("config_edit_machine"):
-        _edit_machine(config)
-
-    elif action == t("config_set_lang"):
-        current = get_lang()
-        current_name = t("lang_zh") if current == "zh" else t("lang_en")
-        info(f"{t('config_current_lang')}: {current_name} ({current})")
-
-        lang_choice = questionary.select(
-            t("config_select_lang"),
+        action = _select(
+            t("config_action"),
             choices=[
-                questionary.Choice(f"{t('lang_zh')} (zh)", value="zh"),
-                questionary.Choice(f"{t('lang_en')} (en)", value="en"),
+                t("config_edit_settings"),
+                t("config_edit_local"),
+                t("config_edit_machine"),
+                t("config_add"),
+                t("config_remove"),
+                t("config_set_lang"),
+                questionary.Separator(),
+                t("config_return"),
             ],
         ).ask()
 
-        if lang_choice and lang_choice != current:
-            set_lang(lang_choice)
-            config.settings.lang = lang_choice
-            config.save()
-            new_name = t("lang_zh") if lang_choice == "zh" else t("lang_en")
-            success(f"{t('config_lang_changed')} {new_name} ({lang_choice})")
+        if action is None or action == t("config_return"):
+            break
 
-    elif action == t("config_add"):
-        name = questionary.text(t("input_name")).ask()
-        if not name:
-            return
-        host = questionary.text(t("input_host")).ask()
-        if not host:
-            return
-        port = questionary.text(t("input_port"), default="22").ask()
-        user = questionary.text(t("input_user"), default="root").ask()
+        if action == t("config_edit_settings"):
+            _edit_settings(config)
 
-        try:
-            port_val = int(port or 22)
-            if not (1 <= port_val <= 65535):
-                raise ValueError
-        except ValueError:
-            error(t("invalid_port", port=port))
-            return
-        machine = Machine(name=name, host=host, port=port_val,
-                          user=user or "root")
-        try:
-            config.add_machine(machine)
-            config.save()
-            from .history import EVENT_ADD, record_event
-            record_event(EVENT_ADD, machine_name=name, machine_host=host)
-            success(f"{t('machine_added')}: {name} ({host}:{port})")
-        except ValueError as e:
-            error(str(e))
+        elif action == t("config_edit_local"):
+            _edit_local(config)
 
-    elif action == t("config_remove"):
-        machine_names = [m.name for m in config.machines]
-        if not machine_names:
-            info(t("no_machines"))
-            return
-        name = questionary.select(t("select_remove"), choices=machine_names).ask()
-        if name:
-            m = config.find_machine(name)
-            if config.remove_machine(name):
-                if m:
-                    from .history import EVENT_REMOVE, record_event
-                    record_event(EVENT_REMOVE, machine_name=name,
-                                 machine_host=m.host, machine_id=m.machine_id or "")
+        elif action == t("config_edit_machine"):
+            _edit_machine(config)
+
+        elif action == t("config_set_lang"):
+            current = get_lang()
+            current_name = t("lang_zh") if current == "zh" else t("lang_en")
+            info(f"{t('config_current_lang')}: {current_name} ({current})")
+
+            lang_choice = _select(
+                t("config_select_lang"),
+                choices=[
+                    questionary.Choice(f"{t('lang_zh')} (zh)", value="zh"),
+                    questionary.Choice(f"{t('lang_en')} (en)", value="en"),
+                    questionary.Separator(),
+                    questionary.Choice(t("config_return"), value="__back__"),
+                ],
+            ).ask()
+
+            if lang_choice and lang_choice != "__back__" and lang_choice != current:
+                set_lang(lang_choice)
+                config.settings.lang = lang_choice
                 config.save()
-                success(f"{t('machine_removed')}: {name}")
+                new_name = t("lang_zh") if lang_choice == "zh" else t("lang_en")
+                success(f"{t('config_lang_changed')} {new_name} ({lang_choice})")
+
+        elif action == t("config_add"):
+            name = _text(t("input_name")).ask()
+            if not name:
+                continue
+            host = _text(t("input_host")).ask()
+            if not host:
+                continue
+            port = _text(t("input_port"), default="22").ask()
+            user = _text(t("input_user"), default="root").ask()
+
+            try:
+                port_val = int(port or 22)
+                if not (1 <= port_val <= 65535):
+                    raise ValueError
+            except ValueError:
+                error(t("invalid_port", port=port))
+                continue
+            machine = Machine(name=name, host=host, port=port_val,
+                              user=user or "root")
+            try:
+                config.add_machine(machine)
+                config.save()
+                from .history import EVENT_ADD, record_event
+                record_event(EVENT_ADD, machine_name=name, machine_host=host)
+                success(f"{t('machine_added')}: {name} ({host}:{port})")
+            except ValueError as e:
+                error(str(e))
+
+        elif action == t("config_remove"):
+            machine_names = [m.name for m in config.machines]
+            if not machine_names:
+                info(t("no_machines"))
+                continue
+            remove_choices = machine_names + [
+                questionary.Separator(),
+                questionary.Choice(t("config_return"), value="__back__"),
+            ]
+            name = _select(t("select_remove"), choices=remove_choices).ask()
+            if name and name != "__back__":
+                m = config.find_machine(name)
+                if config.remove_machine(name):
+                    if m:
+                        from .history import EVENT_REMOVE, record_event
+                        record_event(EVENT_REMOVE, machine_name=name,
+                                     machine_host=m.host, machine_id=m.machine_id or "")
+                    config.save()
+                    success(f"{t('machine_removed')}: {name}")
 
 
 def _edit_settings(config):
@@ -427,12 +478,12 @@ def _edit_settings(config):
     field_map = {k: (v, tp) for k, v, tp, _ in fields}
 
     while True:
-        field = questionary.select(t("config_edit_settings"), choices=choices).ask()
+        field = _select(t("config_edit_settings"), choices=choices).ask()
         if not field or field == "__back__":
             break
 
         old_val, tp = field_map[field]
-        new_val = questionary.text(
+        new_val = _text(
             f"{field} [{t('config_edit_prompt')}]",
             default=old_val,
         ).ask()
@@ -479,12 +530,12 @@ def _edit_local(config):
     field_map = {k: (v, tp) for k, v, tp in fields}
 
     while True:
-        field = questionary.select(t("config_edit_local"), choices=choices).ask()
+        field = _select(t("config_edit_local"), choices=choices).ask()
         if not field or field == "__back__":
             break
 
         old_val, tp = field_map[field]
-        new_val = questionary.text(
+        new_val = _text(
             f"{field} [{t('config_edit_prompt')}]",
             default=old_val,
         ).ask()
@@ -518,8 +569,10 @@ def _edit_machine(config):
         return
 
     machine_names = [m.name for m in config.machines]
-    name = questionary.select(t("select_edit_machine"), choices=machine_names).ask()
-    if not name:
+    machine_names.append(questionary.Separator())
+    machine_names.append(questionary.Choice(t("config_return"), value="__back__"))
+    name = _select(t("select_edit_machine"), choices=machine_names).ask()
+    if not name or name == "__back__":
         return
 
     machine = config.find_machine(name)
@@ -543,12 +596,12 @@ def _edit_machine(config):
     field_map = {k: (v, tp) for k, v, tp in fields}
 
     while True:
-        field = questionary.select(t("config_edit_machine"), choices=choices).ask()
+        field = _select(t("config_edit_machine"), choices=choices).ask()
         if not field or field == "__back__":
             break
 
         old_val, tp = field_map[field]
-        new_val = questionary.text(
+        new_val = _text(
             f"{field} [{t('config_edit_prompt')}]",
             default=old_val,
         ).ask()
@@ -596,39 +649,44 @@ def _interactive_cache(ctx):
     from .downloader import cache_dir, clean_cache, list_cache
 
     config = ctx.obj["config"]
-    entries = list_cache(config.settings)
 
-    if entries:
-        table = Table(title=t("cache_title"))
-        table.add_column(t("cache_col_version"), style="cyan")
-        table.add_column(t("cache_col_platform"), style="white")
-        table.add_column(t("cache_col_size"), style="white")
-        for e in entries:
-            table.add_row(e["version"], e["platform"], f"{e['size_mb']}MB")
-        console.print(table)
-        total_mb = sum(e["size_mb"] for e in entries)
-        console.print(f"\n  {len(entries)} {t('cache_total')} {total_mb:.1f}MB\n")
-    else:
-        info(t("cache_empty"))
+    while True:
+        entries = list_cache(config.settings)
 
-    action = questionary.select(
-        t("cache_action"),
-        choices=[
-            t("cache_clean_keep_n", n=config.settings.max_cache_versions),
-            t("cache_clean_all"),
-            questionary.Separator(),
-            t("config_return"),
-        ],
-    ).ask()
+        if entries:
+            table = Table(title=t("cache_title"))
+            table.add_column(t("cache_col_version"), style="cyan")
+            table.add_column(t("cache_col_platform"), style="white")
+            table.add_column(t("cache_col_size"), style="white")
+            for e in entries:
+                table.add_row(e["version"], e["platform"], f"{e['size_mb']}MB")
+            console.print(table)
+            total_mb = sum(e["size_mb"] for e in entries)
+            console.print(f"\n  {len(entries)} {t('cache_total')} {total_mb:.1f}MB\n")
+        else:
+            info(t("cache_empty"))
 
-    if action == t("cache_clean_keep_n", n=config.settings.max_cache_versions):
-        clean_cache(config.settings)
-    elif action == t("cache_clean_all"):
-        import shutil
-        cache_path = cache_dir(config.settings)
-        if cache_path.exists():
-            shutil.rmtree(cache_path)
-            success(t("cache_all_cleared"))
+        action = _select(
+            t("cache_action"),
+            choices=[
+                t("cache_clean_keep_n", n=config.settings.max_cache_versions),
+                t("cache_clean_all"),
+                questionary.Separator(),
+                t("config_return"),
+            ],
+        ).ask()
+
+        if action is None or action == t("config_return"):
+            break
+
+        if action == t("cache_clean_keep_n", n=config.settings.max_cache_versions):
+            clean_cache(config.settings)
+        elif action == t("cache_clean_all"):
+            import shutil
+            cache_path = cache_dir(config.settings)
+            if cache_path.exists():
+                shutil.rmtree(cache_path)
+                success(t("cache_all_cleared"))
 
 
 def _interactive_update(config: Config):
@@ -922,8 +980,6 @@ def config_show(ctx):
 @click.pass_context
 def config_init(ctx, force):
     """Initialize configuration file"""
-    import questionary
-
     config_path = Config.default_config_path()
 
     if config_path.exists() and not force:
@@ -934,13 +990,13 @@ def config_init(ctx, force):
     success(f"{t('config_init_created')}: {config_path}")
 
     if sys.stdin.isatty():
-        add = questionary.confirm(t("config_init_prompt"), default=True).ask()
+        add = _confirm(t("config_init_prompt"), default=True).ask()
         if add:
-            name = questionary.text(t("input_name")).ask()
-            host = questionary.text(t("input_host")).ask()
+            name = _text(t("input_name")).ask()
+            host = _text(t("input_host")).ask()
             if name and host:
-                port = questionary.text(t("input_port"), default="22").ask()
-                user = questionary.text(t("input_user"), default="root").ask()
+                port = _text(t("input_port"), default="22").ask()
+                user = _text(t("input_user"), default="root").ask()
                 try:
                     port_val = int(port or 22)
                     if not (1 <= port_val <= 65535):
