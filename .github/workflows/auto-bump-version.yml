@@ -27,7 +27,7 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const commits = context.event.commits || [];
+            const commits = context.payload.commits || [];
             let hasFeat = false, hasFix = false, hasBreaking = false;
 
             for (const c of commits) {
