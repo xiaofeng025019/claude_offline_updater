@@ -401,7 +401,8 @@ def _edit_settings(config):
 
     s = config.settings
     fields = [
-        ("max_versions", str(s.max_versions), str, "3"),
+        ("max_versions", str(s.max_versions), int, "3"),
+        ("max_cache_versions", str(s.max_cache_versions), int, "3"),
         ("connect_timeout", str(s.connect_timeout), int, "10"),
         ("download_timeout", str(s.download_timeout), int, "300"),
         ("max_retries", str(s.max_retries), int, "3"),
@@ -613,15 +614,15 @@ def _interactive_cache(ctx):
     action = questionary.select(
         t("cache_action"),
         choices=[
-            t("cache_clean_keep"),
+            t("cache_clean_keep_n", n=config.settings.max_cache_versions),
             t("cache_clean_all"),
             questionary.Separator(),
             t("config_return"),
         ],
     ).ask()
 
-    if action == t("cache_clean_keep"):
-        clean_cache(config.settings, keep=3)
+    if action == t("cache_clean_keep_n", n=config.settings.max_cache_versions):
+        clean_cache(config.settings)
     elif action == t("cache_clean_all"):
         import shutil
         cache_path = cache_dir(config.settings)
@@ -1032,7 +1033,8 @@ def cache_list(ctx):
 
 
 @cache.command("clean")
-@click.option("--keep", "-k", default=3, help="Keep latest N versions")
+@click.option("--keep", "-k", default=None, type=int,
+              help="Keep latest N versions (default: from config)")
 @click.option("--all", "clean_all", is_flag=True, help="Clear all cache")
 @click.pass_context
 def cache_clean(ctx, keep, clean_all):

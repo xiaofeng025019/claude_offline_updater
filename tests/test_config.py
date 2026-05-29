@@ -28,6 +28,7 @@ class TestSettings:
     def test_defaults(self, sample_settings):
         s = sample_settings
         assert s.max_versions == 3
+        assert s.max_cache_versions == 3
         assert s.remote_claude_bin == "~/.local/bin/claude"
         assert s.remote_versions_dir == "~/.local/share/claude/versions"
         assert s.remote_tmp_dir == "/tmp/claude-update"

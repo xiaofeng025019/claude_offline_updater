@@ -242,6 +242,7 @@ _T: dict[str, dict[str, str]] = {
     "cache_total":           {"zh": "个缓存，总计", "en": "cache entries, total"},
     "cache_action":          {"zh": "缓存操作:", "en": "Cache action:"},
     "cache_clean_keep":      {"zh": "清理旧缓存（保留最新3个）", "en": "Clean old cache (keep latest 3)"},
+    "cache_clean_keep_n":    {"zh": "清理旧缓存（保留最新{n}个）", "en": "Clean old cache (keep latest {n})"},
     "cache_clean_all":       {"zh": "清空全部缓存", "en": "Clear all cache"},
     "cache_cleaned":         {"zh": "缓存清理完成，保留", "en": "Cache cleaned, kept"},
     "cache_cleaned_delete":  {"zh": "个，删除", "en": ", deleted"},

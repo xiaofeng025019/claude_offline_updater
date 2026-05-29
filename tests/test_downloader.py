@@ -109,6 +109,17 @@ class TestCleanCache:
         clean_cache(s, keep=5)
         assert len(list(tmp_path.glob("claude-*"))) == 2
 
+    def test_uses_max_cache_versions_when_keep_is_none(self, tmp_path):
+        s = Settings(local_cache_dir=str(tmp_path), max_cache_versions=2)
+        for v in ["1.0.0", "2.0.0", "3.0.0", "4.0.0"]:
+            (tmp_path / f"claude-{v}-linux-x64").write_bytes(b"\x00" * 100)
+        clean_cache(s)
+        remaining = list(tmp_path.glob("claude-*"))
+        assert len(remaining) == 2
+        names = sorted(f.name for f in remaining)
+        assert "claude-3.0.0-linux-x64" in names
+        assert "claude-4.0.0-linux-x64" in names
+
 
 class TestSha256File:
     def test_produces_correct_hash(self, tmp_path):
