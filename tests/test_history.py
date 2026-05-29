@@ -8,11 +8,13 @@ from claude_offline_updater.history import (
     EVENT_IP_CHANGE,
     EVENT_REMOVE,
     EVENT_RENAME,
+    EVENT_ROLLBACK,
     EVENT_UPDATE,
     _read_records,
     get_history,
     record_batch,
     record_event,
+    record_rollback,
 )
 
 
@@ -287,3 +289,39 @@ class TestEventTypeFilter:
         record_event(EVENT_REMOVE, "s2", "10.0.0.2")
         result = get_history()
         assert len(result) == 2
+
+
+class TestRecordRollback:
+    def test_records_rollback_event(self, history_file):
+        record_rollback("server1", "10.0.0.1", "3.0.0", "2.0.0", "success")
+        records = _read_records()
+        assert len(records) == 1
+        assert records[0]["event_type"] == "rollback"
+        assert records[0]["from_version"] == "3.0.0"
+        assert records[0]["to_version"] == "2.0.0"
+        assert records[0]["status"] == "success"
+
+    def test_rollback_with_detail(self, history_file):
+        record_rollback("s1", "10.0.0.1", "3.0.0", "2.0.0", "failed",
+                        detail="version not found", duration_seconds=5.0)
+        records = _read_records()
+        assert records[0]["status"] == "failed"
+        assert records[0]["detail"] == "version not found"
+        assert records[0]["duration_seconds"] == 5.0
+
+    def test_rollback_with_machine_id(self, history_file):
+        record_rollback("s1", "10.0.0.1", "3.0.0", "2.0.0", "success",
+                        machine_id="abc123")
+        records = _read_records()
+        assert records[0]["machine_id"] == "abc123"
+
+    def test_record_event_rejects_rollback_type(self, history_file):
+        with pytest.raises(ValueError, match="record_rollback"):
+            record_event(EVENT_ROLLBACK, machine_name="s1", machine_host="10.0.0.1")
+
+    def test_filter_by_rollback_type(self, history_file):
+        record_rollback("s1", "10.0.0.1", "3.0.0", "2.0.0", "success")
+        record_event(EVENT_ADD, "s2", "10.0.0.2")
+        result = get_history(event_type="rollback")
+        assert len(result) == 1
+        assert result[0]["event_type"] == "rollback"

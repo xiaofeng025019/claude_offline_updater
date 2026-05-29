@@ -10,14 +10,15 @@ HISTORY_PATH = Path.home() / ".local" / "share" / "claude-update" / "history.jso
 
 EVENT_UPDATE = "update"
 EVENT_INSTALL = "install"
+EVENT_ROLLBACK = "rollback"
 EVENT_ADD = "add"
 EVENT_REMOVE = "remove"
 EVENT_RENAME = "rename"
 EVENT_IP_CHANGE = "ip_change"
 EVENT_FIRST_SEEN = "first_seen"
 
-VALID_EVENT_TYPES = (EVENT_UPDATE, EVENT_INSTALL, EVENT_ADD, EVENT_REMOVE,
-                     EVENT_RENAME, EVENT_IP_CHANGE, EVENT_FIRST_SEEN)
+VALID_EVENT_TYPES = (EVENT_UPDATE, EVENT_INSTALL, EVENT_ROLLBACK, EVENT_ADD,
+                     EVENT_REMOVE, EVENT_RENAME, EVENT_IP_CHANGE, EVENT_FIRST_SEEN)
 
 
 def _read_records() -> list[dict]:
@@ -73,6 +74,25 @@ def record_batch(results: list[dict]):
         })
 
 
+def record_rollback(machine_name: str, machine_host: str,
+                    from_version: str, to_version: str, status: str,
+                    machine_id: str = "", detail: str = "",
+                    duration_seconds: float = 0):
+    """Record a rollback event"""
+    _append_record({
+        "event_type": EVENT_ROLLBACK,
+        "timestamp": datetime.now().isoformat(),
+        "machine_name": machine_name,
+        "machine_host": machine_host,
+        "machine_id": machine_id,
+        "from_version": from_version,
+        "to_version": to_version,
+        "status": status,
+        "detail": detail,
+        "duration_seconds": duration_seconds,
+    })
+
+
 def record_event(event_type: str, machine_name: str, machine_host: str,
                  machine_id: str = "", **kwargs):
     """Record a non-update operation event"""
@@ -82,6 +102,8 @@ def record_event(event_type: str, machine_name: str, machine_host: str,
         raise ValueError("Use record_batch() for update events")
     if event_type == EVENT_INSTALL:
         raise ValueError("Use record_batch() for install events")
+    if event_type == EVENT_ROLLBACK:
+        raise ValueError("Use record_rollback() for rollback events")
 
     record = {
         "event_type": event_type,
