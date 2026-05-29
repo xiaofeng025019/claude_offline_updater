@@ -155,11 +155,25 @@ _T: dict[str, dict[str, str]] = {
     "event_rename":          {"zh": "重命名", "en": "Rename"},
     "event_ip_change":       {"zh": "IP变更", "en": "IP Change"},
     "event_first_seen":      {"zh": "首次发现", "en": "First Seen"},
+    "event_rollback":        {"zh": "回退", "en": "Rollback"},
     "detail_renamed":        {"zh": "{old} → {new}", "en": "{old} → {new}"},
     "detail_ip_changed":     {"zh": "{old} → {new}", "en": "{old} → {new}"},
     "detail_first_seen":     {"zh": "发现机器ID: {mid}", "en": "Discovered machine ID: {mid}"},
     "oplog_type_all":        {"zh": "全部类型", "en": "All types"},
     "oplog_type_filter":     {"zh": "筛选事件类型:", "en": "Filter event type:"},
+
+    # ── Rollback ──────────────────────────────────────────────────────────
+    "menu_rollback":         {"zh": "回退版本", "en": "Rollback version"},
+    "rollback_title":        {"zh": "回退版本", "en": "Rollback Version"},
+    "rollback_select_machine": {"zh": "选择要回退的机器:", "en": "Select machine to rollback:"},
+    "rollback_select_version": {"zh": "选择回退目标版本:", "en": "Select target version:"},
+    "rollback_to_previous":  {"zh": "回退到上一版本 ({version})", "en": "Rollback to previous ({version})"},
+    "rollback_confirm":      {"zh": "确认回退 {name}: {current} → {target}?",
+                              "en": "Confirm rollback {name}: {current} → {target}?"},
+    "rollback_success":      {"zh": "回退成功", "en": "Rollback successful"},
+    "rollback_failed":       {"zh": "回退失败", "en": "Rollback failed"},
+    "rollback_no_versions":  {"zh": "没有可回退的版本", "en": "No versions available for rollback"},
+    "rollback_already":      {"zh": "当前已是该版本", "en": "Already on this version"},
 
     # ── Config ────────────────────────────────────────────────────────────
     "config_action":         {"zh": "配置操作:", "en": "Config action:"},
@@ -249,7 +263,6 @@ _T: dict[str, dict[str, str]] = {
     "invalid_port":          {"zh": "无效端口: {port}", "en": "Invalid port: {port}"},
     "machine_not_found_list": {"zh": "未找到机器: {machines}", "en": "Machine not found: {machines}"},
     "scp_failed_limit":      {"zh": "SCP 传输失败（带宽限制 {limit_kbs} KB/s）", "en": "SCP transfer failed (bandwidth limit {limit_kbs} KB/s)"},
-    "rollback_failed":       {"zh": "回滚失败: {detail}", "en": "Rollback failed: {detail}"},
 }
 
 

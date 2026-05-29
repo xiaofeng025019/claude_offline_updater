@@ -9,6 +9,9 @@ from claude_offline_updater.deployer import (
     deploy_all,
     deploy_local,
     deploy_to_machine,
+    rollback_all,
+    rollback_local,
+    rollback_to_machine,
 )
 
 
@@ -383,3 +386,227 @@ class TestHelperFunctions:
         client.exec_command.assert_called_once()
         cmd = client.exec_command.call_args[0][0]
         assert "mkdir -p" in cmd
+
+
+class TestRollbackLocal:
+    def test_skips_when_same_version(self, sample_local, sample_settings):
+        result = rollback_local("2.0.0", "2.0.0", sample_local, sample_settings)
+        assert result["status"] == "skipped"
+        assert result["duration_seconds"] == 0
+
+    @patch("claude_offline_updater.deployer.subprocess.run")
+    @patch("claude_offline_updater.deployer.os.access", return_value=True)
+    @patch("claude_offline_updater.deployer.os.path.isfile", return_value=True)
+    def test_rollback_success(self, mock_isfile, mock_access, mock_run,
+                               sample_local, sample_settings):
+        ln_proc = MagicMock()
+        ln_proc.returncode = 0
+        ver_proc = MagicMock()
+        ver_proc.returncode = 0
+        ver_proc.stdout = "1.5.0\n"
+        mock_run.side_effect = [ln_proc, ver_proc]
+
+        result = rollback_local("2.0.0", "1.5.0", sample_local, sample_settings)
+        assert result["status"] == "success"
+        assert result["from_version"] == "2.0.0"
+        assert result["to_version"] == "1.5.0"
+
+    @patch("claude_offline_updater.deployer.os.access", return_value=False)
+    @patch("claude_offline_updater.deployer.os.path.isfile", return_value=True)
+    def test_target_not_executable(self, mock_isfile, mock_access,
+                                    sample_local, sample_settings):
+        result = rollback_local("2.0.0", "1.0.0", sample_local, sample_settings)
+        assert result["status"] == "failed"
+        assert "not found" in result["detail"]
+
+    @patch("claude_offline_updater.deployer.os.path.isfile", return_value=False)
+    def test_target_not_found(self, mock_isfile, sample_local, sample_settings):
+        result = rollback_local("2.0.0", "1.0.0", sample_local, sample_settings)
+        assert result["status"] == "failed"
+
+    @patch("claude_offline_updater.deployer.subprocess.run")
+    @patch("claude_offline_updater.deployer.os.access", return_value=True)
+    @patch("claude_offline_updater.deployer.os.path.isfile", return_value=True)
+    def test_rollback_version_mismatch_reverts(self, mock_isfile, mock_access,
+                                                mock_run, sample_local, sample_settings):
+        ln_proc = MagicMock()
+        ln_proc.returncode = 0
+        ver_proc = MagicMock()
+        ver_proc.returncode = 0
+        ver_proc.stdout = "9.9.9\n"
+        revert_proc = MagicMock()
+        revert_proc.returncode = 0
+        mock_run.side_effect = [ln_proc, ver_proc, revert_proc]
+
+        result = rollback_local("2.0.0", "1.5.0", sample_local, sample_settings)
+        assert result["status"] == "failed"
+        assert mock_run.call_count == 3  # ln -sf, --version, revert ln -sf
+
+    @patch("claude_offline_updater.deployer.subprocess.run", side_effect=Exception("ln failed"))
+    @patch("claude_offline_updater.deployer.os.access", return_value=True)
+    @patch("claude_offline_updater.deployer.os.path.isfile", return_value=True)
+    def test_ln_sf_exception(self, mock_isfile, mock_access, mock_run,
+                              sample_local, sample_settings):
+        result = rollback_local("2.0.0", "1.5.0", sample_local, sample_settings)
+        assert result["status"] == "failed"
+        assert "ln failed" in result["detail"]
+
+
+class TestRollbackToMachine:
+    def _make_result(self, version="2.0.0"):
+        return {
+            "name": "server1", "host": "10.0.0.1", "port": 22,
+            "user": "root", "version": version, "machine_id": "abc123",
+        }
+
+    def test_skips_when_same_version(self, sample_settings):
+        result = rollback_to_machine(self._make_result("1.5.0"), "1.5.0", sample_settings)
+        assert result["status"] == "skipped"
+
+    @patch("claude_offline_updater.deployer._ssh_connect")
+    def test_remote_rollback_success(self, mock_connect, sample_settings):
+        client = MagicMock()
+        mock_connect.return_value = client
+
+        def exec_side_effect(cmd, timeout=10):
+            stdout = MagicMock()
+            if "test -x" in cmd:
+                stdout.read.return_value = b"ok"
+            elif "--version" in cmd:
+                stdout.read.return_value = b"1.5.0\n"
+            return (MagicMock(), stdout, MagicMock())
+
+        client.exec_command.side_effect = exec_side_effect
+
+        result = rollback_to_machine(self._make_result(), "1.5.0", sample_settings)
+        assert result["status"] == "success"
+        assert result["to_version"] == "1.5.0"
+        client.close.assert_called_once()
+
+    @patch("claude_offline_updater.deployer._ssh_connect")
+    def test_remote_target_not_found(self, mock_connect, sample_settings):
+        client = MagicMock()
+        mock_connect.return_value = client
+
+        stdout = MagicMock()
+        stdout.read.return_value = b"missing"
+        client.exec_command.return_value = (MagicMock(), stdout, MagicMock())
+
+        result = rollback_to_machine(self._make_result(), "1.0.0", sample_settings)
+        assert result["status"] == "failed"
+        assert "not found" in result["detail"]
+
+    @patch("claude_offline_updater.deployer._ssh_connect")
+    def test_remote_version_mismatch_reverts(self, mock_connect, sample_settings):
+        client = MagicMock()
+        mock_connect.return_value = client
+
+        call_count = [0]
+
+        def exec_side_effect(cmd, timeout=10):
+            call_count[0] += 1
+            stdout = MagicMock()
+            if "test -x" in cmd:
+                stdout.read.return_value = b"ok"
+            elif "--version" in cmd:
+                stdout.read.return_value = b"9.9.9\n"
+            return (MagicMock(), stdout, MagicMock())
+
+        client.exec_command.side_effect = exec_side_effect
+
+        result = rollback_to_machine(self._make_result(), "1.5.0", sample_settings)
+        assert result["status"] == "failed"
+        # Should have called exec_command for: test, ln -sf, --version, revert ln -sf
+        assert call_count[0] >= 3
+
+    @patch("claude_offline_updater.deployer._ssh_connect")
+    def test_ssh_exception(self, mock_connect, sample_settings):
+        mock_connect.side_effect = Exception("connection refused")
+        result = rollback_to_machine(self._make_result(), "1.5.0", sample_settings)
+        assert result["status"] == "failed"
+
+    @patch("claude_offline_updater.deployer._ssh_connect")
+    def test_client_closed_on_exception(self, mock_connect, sample_settings):
+        client = MagicMock()
+        mock_connect.return_value = client
+        client.exec_command.side_effect = Exception("cmd failed")
+
+        rollback_to_machine(self._make_result(), "1.5.0", sample_settings)
+        client.close.assert_called_once()
+
+
+class TestRollbackAll:
+    def test_local_rollback_called(self, sample_settings, sample_local):
+        local_target = {
+            "name": "localhost", "host": "127.0.0.1",
+            "version": "2.0.0", "is_local": True, "machine_id": "m1",
+        }
+        with patch("claude_offline_updater.deployer.rollback_local") as mock_local:
+            mock_local.return_value = {
+                "name": "localhost", "host": "127.0.0.1",
+                "from_version": "2.0.0", "to_version": "1.5.0",
+                "status": "success", "duration_seconds": 1.0,
+                "machine_id": "m1",
+            }
+            results = rollback_all(
+                [local_target], "1.5.0", sample_settings, sample_local,
+            )
+            mock_local.assert_called_once()
+            assert results[0]["status"] == "success"
+
+    def test_remote_parallel_rollback(self, sample_settings):
+        remote1 = {
+            "name": "s1", "host": "10.0.0.1", "version": "2.0.0",
+            "is_local": False, "machine_id": "m1",
+        }
+        remote2 = {
+            "name": "s2", "host": "10.0.0.2", "version": "2.0.0",
+            "is_local": False, "machine_id": "m2",
+        }
+        with patch("claude_offline_updater.deployer.rollback_to_machine") as mock_remote:
+            mock_remote.return_value = {
+                "name": "s1", "host": "10.0.0.1",
+                "from_version": "2.0.0", "to_version": "1.5.0",
+                "status": "success", "duration_seconds": 2.0,
+                "machine_id": "m1",
+            }
+            rollback_all([remote1, remote2], "1.5.0", sample_settings)
+            assert mock_remote.call_count == 2
+
+    def test_local_without_local_config_skipped(self, sample_settings):
+        local_target = {
+            "name": "localhost", "host": "127.0.0.1",
+            "version": "2.0.0", "is_local": True, "machine_id": "m1",
+        }
+        results = rollback_all([local_target], "1.5.0", sample_settings, local=None)
+        assert results[0]["status"] == "skipped"
+
+    def test_results_sorted_local_first(self, sample_settings, sample_local):
+        local_result = {
+            "name": "localhost", "host": "127.0.0.1",
+            "version": "2.0.0", "is_local": True, "machine_id": "m1",
+        }
+        remote_result = {
+            "name": "s1", "host": "10.0.0.1", "version": "2.0.0",
+            "is_local": False, "machine_id": "m2",
+        }
+        with patch("claude_offline_updater.deployer.rollback_local") as mock_local, \
+             patch("claude_offline_updater.deployer.rollback_to_machine") as mock_remote:
+            mock_local.return_value = {
+                "name": "localhost", "host": "127.0.0.1",
+                "from_version": "2.0.0", "to_version": "1.5.0",
+                "status": "success", "duration_seconds": 1.0,
+                "machine_id": "m1",
+            }
+            mock_remote.return_value = {
+                "name": "s1", "host": "10.0.0.1",
+                "from_version": "2.0.0", "to_version": "1.5.0",
+                "status": "success", "duration_seconds": 2.0,
+                "machine_id": "m2",
+            }
+            results = rollback_all(
+                [local_result, remote_result], "1.5.0",
+                sample_settings, sample_local,
+            )
+            names = [r["name"] for r in results]
+            assert names.index("localhost") < names.index("s1")

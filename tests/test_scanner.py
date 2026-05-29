@@ -1,7 +1,15 @@
 from unittest.mock import MagicMock, patch
 
 from claude_offline_updater.config import Machine
-from claude_offline_updater.scanner import _get_remote_info, scan_all, scan_local, scan_machine
+from claude_offline_updater.scanner import (
+    _get_remote_info,
+    _version_key,
+    list_installed_versions_local,
+    list_installed_versions_remote,
+    scan_all,
+    scan_local,
+    scan_machine,
+)
 
 
 class TestScanLocal:
@@ -164,3 +172,103 @@ class TestGetRemoteVersion:
 
         _get_remote_info(self._make_machine(), sample_settings)
         mock_client.close.assert_called_once()
+
+
+class TestListInstalledVersionsLocal:
+    def _patch_expanduser(self, monkeypatch, versions_dir):
+        import claude_offline_updater.scanner as scan_mod
+        monkeypatch.setattr(
+            scan_mod.os.path, "expanduser",
+            lambda x: str(versions_dir) if "versions" in x else x,
+        )
+
+    def test_lists_executable_versions(self, sample_local, tmp_path, monkeypatch):
+        versions_dir = tmp_path / "versions"
+        versions_dir.mkdir()
+        (versions_dir / "2.0.0").write_bytes(b"\x00" * 4)
+        (versions_dir / "1.5.0").write_bytes(b"\x00" * 4)
+        (versions_dir / "3.0.0").write_bytes(b"\x00" * 4)
+        (versions_dir / "2.0.0").chmod(0o755)
+        (versions_dir / "1.5.0").chmod(0o755)
+        (versions_dir / "3.0.0").chmod(0o755)
+
+        self._patch_expanduser(monkeypatch, versions_dir)
+        result = list_installed_versions_local(sample_local)
+        assert result[0] == "3.0.0"
+        assert "2.0.0" in result
+        assert "1.5.0" in result
+
+    def test_empty_dir(self, sample_local, tmp_path, monkeypatch):
+        versions_dir = tmp_path / "versions"
+        versions_dir.mkdir()
+        self._patch_expanduser(monkeypatch, versions_dir)
+        assert list_installed_versions_local(sample_local) == []
+
+    def test_nonexistent_dir(self, sample_local, tmp_path, monkeypatch):
+        self._patch_expanduser(monkeypatch, tmp_path / "nope")
+        assert list_installed_versions_local(sample_local) == []
+
+    def test_skips_non_executable(self, sample_local, tmp_path, monkeypatch):
+        versions_dir = tmp_path / "versions"
+        versions_dir.mkdir()
+        f = versions_dir / "1.0.0"
+        f.write_text("data")
+        f.chmod(0o644)
+
+        self._patch_expanduser(monkeypatch, versions_dir)
+        result = list_installed_versions_local(sample_local)
+        assert result == []
+
+    def test_skips_subdirectories(self, sample_local, tmp_path, monkeypatch):
+        versions_dir = tmp_path / "versions"
+        versions_dir.mkdir()
+        subdir = versions_dir / "1.0.0"
+        subdir.mkdir()
+
+        self._patch_expanduser(monkeypatch, versions_dir)
+        result = list_installed_versions_local(sample_local)
+        assert result == []
+
+
+class TestListInstalledVersionsRemote:
+    @patch("claude_offline_updater.scanner.paramiko.SSHClient")
+    def test_returns_sorted_versions(self, mock_client_cls, sample_settings, sample_machine):
+        client = MagicMock()
+        mock_client_cls.return_value = client
+        stdout = MagicMock()
+        stdout.read.return_value = b"2.0.0\n1.5.0\n3.0.0\n"
+        client.exec_command.return_value = (MagicMock(), stdout, MagicMock())
+
+        result = list_installed_versions_remote(sample_machine, sample_settings)
+        assert result == ["3.0.0", "2.0.0", "1.5.0"]
+        client.close.assert_called_once()
+
+    @patch("claude_offline_updater.scanner.paramiko.SSHClient")
+    def test_empty_output(self, mock_client_cls, sample_settings, sample_machine):
+        client = MagicMock()
+        mock_client_cls.return_value = client
+        stdout = MagicMock()
+        stdout.read.return_value = b""
+        client.exec_command.return_value = (MagicMock(), stdout, MagicMock())
+
+        result = list_installed_versions_remote(sample_machine, sample_settings)
+        assert result == []
+
+    @patch("claude_offline_updater.scanner.paramiko.SSHClient")
+    def test_ssh_exception(self, mock_client_cls, sample_settings, sample_machine):
+        client = MagicMock()
+        mock_client_cls.return_value = client
+        client.connect.side_effect = Exception("fail")
+
+        result = list_installed_versions_remote(sample_machine, sample_settings)
+        assert result == []
+
+
+class TestVersionKey:
+    def test_sorts_correctly(self):
+        versions = ["2.0.0", "1.10.0", "1.9.0", "3.0.0"]
+        versions.sort(key=_version_key, reverse=True)
+        assert versions == ["3.0.0", "2.0.0", "1.10.0", "1.9.0"]
+
+    def test_handles_non_numeric(self):
+        assert _version_key("1.0.0-beta") == (1, 0, 0)
