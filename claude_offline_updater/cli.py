@@ -3,12 +3,42 @@
 import sys
 
 import click
+from prompt_toolkit.keys import Keys
 
 from . import __version__, get_version_display
 from .config import DEFAULTS, Config, Machine, _shorten_path
 from .display import _prefix, console, error, header, info, show_scan_results, success, warn
 from .downloader import DownloadError
 from .i18n import get_lang, set_lang, t
+
+
+def _bind_esc(question):
+    """Add ESC key binding to a questionary Question, making ESC behave like Ctrl+C."""
+    kb = question.application.key_bindings
+
+    @kb.add(Keys.Escape, eager=True)
+    def _on_esc(event):
+        event.app.exit(exception=KeyboardInterrupt, style="class:aborting")
+
+    return question
+
+
+def _select(message, **kwargs):
+    """questionary.select with ESC key bound (ESC returns None)"""
+    import questionary
+    return _bind_esc(questionary.select(message, **kwargs))
+
+
+def _confirm(message, **kwargs):
+    """questionary.confirm with ESC key bound (ESC returns None)"""
+    import questionary
+    return _bind_esc(questionary.confirm(message, **kwargs))
+
+
+def _text(message, **kwargs):
+    """questionary.text with ESC key bound (ESC returns None)"""
+    import questionary
+    return _bind_esc(questionary.text(message, **kwargs))
 
 
 @click.group(invoke_without_command=True)
@@ -53,7 +83,7 @@ def _interactive_main(ctx):
     header(f"{t('app_title')}  {get_version_display()}")
 
     while True:
-        action = questionary.select(
+        action = _select(
             t("menu_prompt"),
             choices=[
                 questionary.Choice(t("menu_scan"), value="scan"),
@@ -152,7 +182,7 @@ def _interactive_rollback(ctx):
         info(t("no_machines"))
         return
 
-    machine_choice = questionary.select(
+    machine_choice = _select(
         t("rollback_select_machine"), choices=machine_choices,
     ).ask()
     if not machine_choice:
@@ -203,7 +233,7 @@ def _interactive_rollback(ctx):
     for v in available:
         version_choices.append(questionary.Choice(v, value=v))
 
-    target_version = questionary.select(
+    target_version = _select(
         t("rollback_select_version"), choices=version_choices,
     ).ask()
     if not target_version:
@@ -214,7 +244,7 @@ def _interactive_rollback(ctx):
         return
 
     # Confirm
-    confirm = questionary.confirm(
+    confirm = _confirm(
         t("rollback_confirm", name=machine_choice, current=current_version, target=target_version),
         default=False,
     ).ask()
@@ -254,8 +284,6 @@ def _interactive_rollback(ctx):
 
 def _interactive_history(ctx):
     """Interactive history"""
-    import questionary
-
     from .display import show_oplog_table
     from .history import get_history
 
@@ -270,7 +298,7 @@ def _interactive_history(ctx):
         choices.append("localhost")
     choices += machine_names
 
-    filter_choice = questionary.select(
+    filter_choice = _select(
         t("oplog_filter"),
         choices=choices,
     ).ask()
@@ -310,7 +338,7 @@ def _interactive_config(ctx):
     while True:
         show_config_panels(config)
 
-        action = questionary.select(
+        action = _select(
             t("config_action"),
             choices=[
                 t("config_edit_settings"),
@@ -341,7 +369,7 @@ def _interactive_config(ctx):
             current_name = t("lang_zh") if current == "zh" else t("lang_en")
             info(f"{t('config_current_lang')}: {current_name} ({current})")
 
-            lang_choice = questionary.select(
+            lang_choice = _select(
                 t("config_select_lang"),
                 choices=[
                     questionary.Choice(f"{t('lang_zh')} (zh)", value="zh"),
@@ -357,14 +385,14 @@ def _interactive_config(ctx):
                 success(f"{t('config_lang_changed')} {new_name} ({lang_choice})")
 
         elif action == t("config_add"):
-            name = questionary.text(t("input_name")).ask()
+            name = _text(t("input_name")).ask()
             if not name:
                 continue
-            host = questionary.text(t("input_host")).ask()
+            host = _text(t("input_host")).ask()
             if not host:
                 continue
-            port = questionary.text(t("input_port"), default="22").ask()
-            user = questionary.text(t("input_user"), default="root").ask()
+            port = _text(t("input_port"), default="22").ask()
+            user = _text(t("input_user"), default="root").ask()
 
             try:
                 port_val = int(port or 22)
@@ -389,7 +417,7 @@ def _interactive_config(ctx):
             if not machine_names:
                 info(t("no_machines"))
                 continue
-            name = questionary.select(t("select_remove"), choices=machine_names).ask()
+            name = _select(t("select_remove"), choices=machine_names).ask()
             if name:
                 m = config.find_machine(name)
                 if config.remove_machine(name):
@@ -434,12 +462,12 @@ def _edit_settings(config):
     field_map = {k: (v, tp) for k, v, tp, _ in fields}
 
     while True:
-        field = questionary.select(t("config_edit_settings"), choices=choices).ask()
+        field = _select(t("config_edit_settings"), choices=choices).ask()
         if not field or field == "__back__":
             break
 
         old_val, tp = field_map[field]
-        new_val = questionary.text(
+        new_val = _text(
             f"{field} [{t('config_edit_prompt')}]",
             default=old_val,
         ).ask()
@@ -486,12 +514,12 @@ def _edit_local(config):
     field_map = {k: (v, tp) for k, v, tp in fields}
 
     while True:
-        field = questionary.select(t("config_edit_local"), choices=choices).ask()
+        field = _select(t("config_edit_local"), choices=choices).ask()
         if not field or field == "__back__":
             break
 
         old_val, tp = field_map[field]
-        new_val = questionary.text(
+        new_val = _text(
             f"{field} [{t('config_edit_prompt')}]",
             default=old_val,
         ).ask()
@@ -525,7 +553,7 @@ def _edit_machine(config):
         return
 
     machine_names = [m.name for m in config.machines]
-    name = questionary.select(t("select_edit_machine"), choices=machine_names).ask()
+    name = _select(t("select_edit_machine"), choices=machine_names).ask()
     if not name:
         return
 
@@ -550,12 +578,12 @@ def _edit_machine(config):
     field_map = {k: (v, tp) for k, v, tp in fields}
 
     while True:
-        field = questionary.select(t("config_edit_machine"), choices=choices).ask()
+        field = _select(t("config_edit_machine"), choices=choices).ask()
         if not field or field == "__back__":
             break
 
         old_val, tp = field_map[field]
-        new_val = questionary.text(
+        new_val = _text(
             f"{field} [{t('config_edit_prompt')}]",
             default=old_val,
         ).ask()
@@ -620,7 +648,7 @@ def _interactive_cache(ctx):
         else:
             info(t("cache_empty"))
 
-        action = questionary.select(
+        action = _select(
             t("cache_action"),
             choices=[
                 t("cache_clean_keep_n", n=config.settings.max_cache_versions),
@@ -934,8 +962,6 @@ def config_show(ctx):
 @click.pass_context
 def config_init(ctx, force):
     """Initialize configuration file"""
-    import questionary
-
     config_path = Config.default_config_path()
 
     if config_path.exists() and not force:
@@ -946,13 +972,13 @@ def config_init(ctx, force):
     success(f"{t('config_init_created')}: {config_path}")
 
     if sys.stdin.isatty():
-        add = questionary.confirm(t("config_init_prompt"), default=True).ask()
+        add = _confirm(t("config_init_prompt"), default=True).ask()
         if add:
-            name = questionary.text(t("input_name")).ask()
-            host = questionary.text(t("input_host")).ask()
+            name = _text(t("input_name")).ask()
+            host = _text(t("input_host")).ask()
             if name and host:
-                port = questionary.text(t("input_port"), default="22").ask()
-                user = questionary.text(t("input_user"), default="root").ask()
+                port = _text(t("input_port"), default="22").ask()
+                user = _text(t("input_user"), default="root").ask()
                 try:
                     port_val = int(port or 22)
                     if not (1 <= port_val <= 65535):
