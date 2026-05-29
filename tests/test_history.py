@@ -3,9 +3,16 @@ import json
 import pytest
 
 from claude_offline_updater.history import (
+    EVENT_ADD,
+    EVENT_FIRST_SEEN,
+    EVENT_IP_CHANGE,
+    EVENT_REMOVE,
+    EVENT_RENAME,
+    EVENT_UPDATE,
     _read_records,
     get_history,
     record_batch,
+    record_event,
 )
 
 
@@ -49,6 +56,13 @@ class TestReadRecords:
         assert result[0]["machine_name"] == "s1"
         assert result[1]["machine_name"] == "s2"
 
+    def test_old_records_default_to_update_type(self, history_file):
+        """Records without event_type field should be treated as 'update'"""
+        with open(history_file, "w") as f:
+            f.write('{"machine_name": "s1", "status": "success"}\n')
+        result = _read_records()
+        assert result[0]["event_type"] == "update"
+
 
 class TestRecordBatch:
     def test_writes_multiple_records(self, history_file):
@@ -65,6 +79,33 @@ class TestRecordBatch:
         assert records[0]["machine_id"] == "aaa111"
         assert records[1]["machine_name"] == "s2"
         assert records[1]["detail"] == "timeout"
+
+    def test_record_batch_includes_event_type(self, history_file):
+        results = [
+            {"name": "s1", "host": "10.0.0.1", "to_version": "2.0.0",
+             "status": "success", "from_version": "1.0.0"},
+        ]
+        record_batch(results)
+        records = _read_records()
+        assert records[0]["event_type"] == "update"
+
+    def test_record_batch_install_event_type(self, history_file):
+        results = [
+            {"name": "s1", "host": "10.0.0.1", "to_version": "2.0.0",
+             "status": "success", "from_version": "未安装"},
+        ]
+        record_batch(results)
+        records = _read_records()
+        assert records[0]["event_type"] == "install"
+
+    def test_record_batch_install_no_from_version(self, history_file):
+        results = [
+            {"name": "s1", "host": "10.0.0.1", "to_version": "2.0.0",
+             "status": "success"},
+        ]
+        record_batch(results)
+        records = _read_records()
+        assert records[0]["event_type"] == "install"
 
 
 class TestGetHistory:
@@ -174,3 +215,75 @@ class TestGetHistory:
         result = get_history(machine_id="m2", machine="server1")
         assert len(result) == 1
         assert result[0]["machine_id"] == "m2"
+
+
+class TestRecordEvent:
+    def test_add_event(self, history_file):
+        record_event(EVENT_ADD, machine_name="s1", machine_host="10.0.0.1")
+        records = _read_records()
+        assert len(records) == 1
+        assert records[0]["event_type"] == "add"
+        assert records[0]["machine_name"] == "s1"
+
+    def test_remove_event(self, history_file):
+        record_event(EVENT_REMOVE, machine_name="s1", machine_host="10.0.0.1",
+                     machine_id="abc123")
+        records = _read_records()
+        assert records[0]["event_type"] == "remove"
+        assert records[0]["machine_id"] == "abc123"
+
+    def test_rename_event(self, history_file):
+        record_event(EVENT_RENAME, machine_name="new_name", machine_host="10.0.0.1",
+                     old_name="old_name")
+        records = _read_records()
+        assert records[0]["event_type"] == "rename"
+        assert records[0]["old_name"] == "old_name"
+        assert records[0]["machine_name"] == "new_name"
+
+    def test_ip_change_event(self, history_file):
+        record_event(EVENT_IP_CHANGE, machine_name="s1", machine_host="10.0.0.2",
+                     old_host="10.0.0.1")
+        records = _read_records()
+        assert records[0]["event_type"] == "ip_change"
+        assert records[0]["old_host"] == "10.0.0.1"
+
+    def test_first_seen_event(self, history_file):
+        record_event(EVENT_FIRST_SEEN, machine_name="s1", machine_host="10.0.0.1",
+                     machine_id="abc123def456")
+        records = _read_records()
+        assert records[0]["event_type"] == "first_seen"
+        assert records[0]["machine_id"] == "abc123def456"
+
+    def test_rejects_update_event_type(self, history_file):
+        with pytest.raises(ValueError, match="record_batch"):
+            record_event(EVENT_UPDATE, machine_name="s1", machine_host="10.0.0.1")
+
+    def test_rejects_invalid_event_type(self, history_file):
+        with pytest.raises(ValueError, match="Invalid"):
+            record_event("bogus", machine_name="s1", machine_host="10.0.0.1")
+
+    def test_timestamp_auto_filled(self, history_file):
+        record_event(EVENT_ADD, machine_name="s1", machine_host="10.0.0.1")
+        records = _read_records()
+        assert records[0]["timestamp"]
+
+
+class TestEventTypeFilter:
+    def test_filter_by_event_type(self, history_file):
+        record_event(EVENT_ADD, "s1", "10.0.0.1")
+        record_event(EVENT_REMOVE, "s2", "10.0.0.2")
+        record_event(EVENT_ADD, "s3", "10.0.0.3")
+        result = get_history(event_type="add")
+        assert len(result) == 2
+        assert all(r["event_type"] == "add" for r in result)
+
+    def test_filter_returns_empty_for_unmatched_type(self, history_file):
+        record_event(EVENT_ADD, "s1", "10.0.0.1")
+        result = get_history(event_type="rename")
+        assert result == []
+
+    def test_no_filter_returns_all_types(self, history_file):
+        record_event(EVENT_ADD, "s1", "10.0.0.1")
+        record_event(EVENT_REMOVE, "s2", "10.0.0.2")
+        result = get_history()
+        assert len(result) == 2

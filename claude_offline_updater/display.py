@@ -119,37 +119,87 @@ def show_update_results(results: list[dict]):
 
 
 def show_history_table(records: list[dict]):
-    """Display update history table"""
-    table = Table(title=t("history_title"))
+    """Display update history table (backward-compatible alias)"""
+    show_oplog_table(records)
+
+
+def show_oplog_table(records: list[dict]):
+    """Display operation log table"""
+    table = Table(title=t("oplog_title"))
     table.add_column(t("col_time"), style="dim")
     table.add_column(t("col_machine"), style="cyan")
     table.add_column(t("col_host"), style="white")
-    table.add_column(t("col_version_change"), style="white")
-    table.add_column(t("col_status"), style="white")
+    table.add_column(t("col_event"), style="white")
+    table.add_column(t("col_detail"), style="white")
     table.add_column(t("col_duration"), style="white")
 
     for r in records:
-        from_ver = r.get("from_version", "-")
-        to_ver = r["to_version"]
-        version_str = f"{from_ver} → {to_ver}" if from_ver and from_ver != "-" else f"→ {to_ver}"
+        etype = r.get("event_type", "update")
 
-        status = r["status"]
-        if status == "success":
-            status_str = "[green]✓[/green]"
-        elif status == "failed":
-            status_str = "[red]✗[/red]"
+        if etype == "update":
+            status = r.get("status", "")
+            if status == "success":
+                event_str = f"[green]✓[/green] {t('event_update')}"
+            elif status == "failed":
+                event_str = f"[red]✗[/red] {t('event_update')}"
+            else:
+                event_str = f"[dim]─[/dim] {t('event_update')}"
+            from_ver = r.get("from_version", "-")
+            to_ver = r.get("to_version", "")
+            detail_str = f"{from_ver} → {to_ver}" if from_ver and from_ver != "-" else f"→ {to_ver}"
+            duration = r.get("duration_seconds")
+            duration_str = f"{duration:.1f}s" if duration else "-"
+
+        elif etype == "install":
+            status = r.get("status", "")
+            if status == "success":
+                event_str = f"[green]✓[/green] {t('event_install')}"
+            elif status == "failed":
+                event_str = f"[red]✗[/red] {t('event_install')}"
+            else:
+                event_str = f"[dim]─[/dim] {t('event_install')}"
+            to_ver = r.get("to_version", "")
+            detail_str = f"→ {to_ver}" if to_ver else ""
+            duration = r.get("duration_seconds")
+            duration_str = f"{duration:.1f}s" if duration else "-"
+
+        elif etype == "add":
+            event_str = f"[cyan]{t('event_add')}[/cyan]"
+            detail_str = ""
+            duration_str = "-"
+
+        elif etype == "remove":
+            event_str = f"[red]{t('event_remove')}[/red]"
+            detail_str = ""
+            duration_str = "-"
+
+        elif etype == "rename":
+            event_str = f"[yellow]{t('event_rename')}[/yellow]"
+            detail_str = t("detail_renamed", old=r.get("old_name", "?"), new=r["machine_name"])
+            duration_str = "-"
+
+        elif etype == "ip_change":
+            event_str = f"[yellow]{t('event_ip_change')}[/yellow]"
+            detail_str = t("detail_ip_changed", old=r.get("old_host", "?"), new=r["machine_host"])
+            duration_str = "-"
+
+        elif etype == "first_seen":
+            event_str = f"[blue]{t('event_first_seen')}[/blue]"
+            mid = r.get("machine_id", "")
+            detail_str = t("detail_first_seen", mid=f"{mid[:8]}..." if mid else "-")
+            duration_str = "-"
+
         else:
-            status_str = "[dim]─[/dim]"
-
-        duration = r.get("duration_seconds")
-        duration_str = f"{duration:.1f}s" if duration else "-"
+            event_str = etype
+            detail_str = "-"
+            duration_str = "-"
 
         table.add_row(
             r["timestamp"][:19] if r.get("timestamp") else "-",
             r["machine_name"],
             r["machine_host"],
-            version_str,
-            status_str,
+            event_str,
+            detail_str,
             duration_str,
         )
 

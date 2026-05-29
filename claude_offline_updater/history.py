@@ -1,4 +1,4 @@
-"""JSONL file update history tracking (replaces SQLite to avoid environment dependency issues)"""
+"""JSONL operation log tracking (generalized from update history)"""
 
 import fcntl
 import json
@@ -7,6 +7,17 @@ from datetime import datetime
 from pathlib import Path
 
 HISTORY_PATH = Path.home() / ".local" / "share" / "claude-update" / "history.jsonl"
+
+EVENT_UPDATE = "update"
+EVENT_INSTALL = "install"
+EVENT_ADD = "add"
+EVENT_REMOVE = "remove"
+EVENT_RENAME = "rename"
+EVENT_IP_CHANGE = "ip_change"
+EVENT_FIRST_SEEN = "first_seen"
+
+VALID_EVENT_TYPES = (EVENT_UPDATE, EVENT_INSTALL, EVENT_ADD, EVENT_REMOVE,
+                     EVENT_RENAME, EVENT_IP_CHANGE, EVENT_FIRST_SEEN)
 
 
 def _read_records() -> list[dict]:
@@ -21,7 +32,9 @@ def _read_records() -> list[dict]:
                 line = line.strip()
                 if line:
                     try:
-                        records.append(json.loads(line))
+                        record = json.loads(line)
+                        record.setdefault("event_type", EVENT_UPDATE)
+                        records.append(record)
                     except json.JSONDecodeError:
                         continue
         finally:
@@ -44,12 +57,15 @@ def record_batch(results: list[dict]):
     """Batch record update results"""
     now = datetime.now().isoformat()
     for r in results:
+        from_ver = r.get("from_version", "")
+        is_install = not from_ver or from_ver in ("未安装", "Not installed")
         _append_record({
+            "event_type": EVENT_INSTALL if is_install else EVENT_UPDATE,
             "timestamp": now,
             "machine_name": r["name"],
             "machine_host": r["host"],
             "machine_id": r.get("machine_id", ""),
-            "from_version": r.get("from_version", ""),
+            "from_version": from_ver,
             "to_version": r["to_version"],
             "status": r["status"],
             "detail": r.get("detail", ""),
@@ -57,9 +73,35 @@ def record_batch(results: list[dict]):
         })
 
 
+def record_event(event_type: str, machine_name: str, machine_host: str,
+                 machine_id: str = "", **kwargs):
+    """Record a non-update operation event"""
+    if event_type not in VALID_EVENT_TYPES:
+        raise ValueError(f"Invalid event_type: {event_type}")
+    if event_type == EVENT_UPDATE:
+        raise ValueError("Use record_batch() for update events")
+    if event_type == EVENT_INSTALL:
+        raise ValueError("Use record_batch() for install events")
+
+    record = {
+        "event_type": event_type,
+        "timestamp": datetime.now().isoformat(),
+        "machine_name": machine_name,
+        "machine_host": machine_host,
+        "machine_id": machine_id,
+    }
+    if event_type == EVENT_RENAME:
+        record["old_name"] = kwargs.get("old_name", "")
+    elif event_type == EVENT_IP_CHANGE:
+        record["old_host"] = kwargs.get("old_host", "")
+
+    _append_record(record)
+
+
 def get_history(machine: str | None = None, host: str | None = None,
-                machine_id: str | None = None, limit: int = 50) -> list[dict]:
-    """Query update history, preferring machine_id for stable identity"""
+                machine_id: str | None = None, event_type: str | None = None,
+                limit: int = 50) -> list[dict]:
+    """Query operation log, preferring machine_id for stable identity"""
     records = _read_records()
 
     if machine_id:
@@ -74,6 +116,9 @@ def get_history(machine: str | None = None, host: str | None = None,
         records = [r for r in records
                    if (machine and r.get("machine_name") == machine)
                    or (host and r.get("machine_host") == host)]
+
+    if event_type:
+        records = [r for r in records if r.get("event_type") == event_type]
 
     # Sort by time descending, take latest limit records
     records.reverse()
@@ -106,6 +151,99 @@ def backfill_machine_id(machine_name: str, machine_host: str, machine_id: str):
         fcntl.flock(tmp, fcntl.LOCK_EX)
         try:
             for r in records:
+                tmp.write(json.dumps(r, ensure_ascii=False) + "\n")
+        finally:
+            fcntl.flock(tmp, fcntl.LOCK_UN)
+        tmp_path = tmp.name
+    import os
+    os.replace(tmp_path, HISTORY_PATH)
+
+
+def backfill_events():
+    """Detect and insert missing rename/first_seen events, then rewrite file in order"""
+    records = _read_records()
+    if not records:
+        return
+
+    # Build set of existing non-update events to avoid duplicates
+    existing_events = set()
+    for r in records:
+        if r.get("event_type") != EVENT_UPDATE:
+            etype = r["event_type"]
+            ts = r["timestamp"]
+            existing_events.add((etype, ts))
+
+    new_events = []
+
+    # Detect renames: same host, different name, name changes in chronological order
+    by_host: dict[str, list[dict]] = {}
+    for r in records:
+        h = r["machine_host"]
+        if h not in by_host:
+            by_host[h] = []
+        by_host[h].append(r)
+
+    for host, recs in by_host.items():
+        recs_sorted = sorted(recs, key=lambda x: x["timestamp"])
+        seen_names: dict[str, str] = {}  # name -> first timestamp
+        prev_name = None
+        for r in recs_sorted:
+            name = r["machine_name"]
+            if prev_name is not None and name != prev_name and name not in seen_names:
+                # Name changed at this point
+                event_key = (EVENT_RENAME, r["timestamp"])
+                if event_key not in existing_events:
+                    new_events.append({
+                        "event_type": EVENT_RENAME,
+                        "timestamp": r["timestamp"],
+                        "machine_name": name,
+                        "machine_host": host,
+                        "machine_id": r.get("machine_id", ""),
+                        "old_name": prev_name,
+                    })
+            seen_names.setdefault(name, r["timestamp"])
+            prev_name = name
+
+    # Detect first_seen: first record with a non-empty machine_id per machine_id
+    seen_mids: set[str] = set()
+    records_by_time = sorted(records, key=lambda x: x["timestamp"])
+    for r in records_by_time:
+        mid = r.get("machine_id", "")
+        if mid and mid not in seen_mids:
+            seen_mids.add(mid)
+            # Only if there isn't already a first_seen event for this mid
+            already_has = any(
+                e.get("event_type") == EVENT_FIRST_SEEN and e.get("machine_id") == mid
+                for e in records if e.get("event_type") != EVENT_UPDATE
+            )
+            if not already_has:
+                new_events.append({
+                    "event_type": EVENT_FIRST_SEEN,
+                    "timestamp": r["timestamp"],
+                    "machine_name": r["machine_name"],
+                    "machine_host": r["machine_host"],
+                    "machine_id": mid,
+                })
+
+    # Merge old + new records, ensure event_type on all, sort by time, rewrite file
+    all_records = records + new_events
+    for r in all_records:
+        r.setdefault("event_type", EVENT_UPDATE)
+        # Reclassify old "update" records with from_version="未安装"/"Not installed" as install
+        if r["event_type"] == EVENT_UPDATE:
+            from_ver = r.get("from_version", "")
+            if not from_ver or from_ver in ("未安装", "Not installed"):
+                r["event_type"] = EVENT_INSTALL
+    all_records.sort(key=lambda x: x["timestamp"])
+
+    HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        "w", encoding="utf-8", suffix=".jsonl",
+        dir=HISTORY_PATH.parent, delete=False,
+    ) as tmp:
+        fcntl.flock(tmp, fcntl.LOCK_EX)
+        try:
+            for r in all_records:
                 tmp.write(json.dumps(r, ensure_ascii=False) + "\n")
         finally:
             fcntl.flock(tmp, fcntl.LOCK_UN)

@@ -143,6 +143,24 @@ _T: dict[str, dict[str, str]] = {
     "history_filter":        {"zh": "查看哪台机器的历史？", "en": "View history for which machine:"},
     "all_machines":          {"zh": "全部", "en": "All"},
 
+    # ── Operation Log ─────────────────────────────────────────────────────
+    "oplog_title":           {"zh": "操作日志", "en": "Operation Log"},
+    "oplog_no_records":      {"zh": "暂无操作日志记录", "en": "No operation log records"},
+    "oplog_filter":          {"zh": "查看哪台机器的日志？", "en": "View log for which machine:"},
+    "col_event":             {"zh": "事件", "en": "Event"},
+    "event_update":          {"zh": "更新", "en": "Update"},
+    "event_install":         {"zh": "初始安装", "en": "Install"},
+    "event_add":             {"zh": "添加", "en": "Add"},
+    "event_remove":          {"zh": "删除", "en": "Remove"},
+    "event_rename":          {"zh": "重命名", "en": "Rename"},
+    "event_ip_change":       {"zh": "IP变更", "en": "IP Change"},
+    "event_first_seen":      {"zh": "首次发现", "en": "First Seen"},
+    "detail_renamed":        {"zh": "{old} → {new}", "en": "{old} → {new}"},
+    "detail_ip_changed":     {"zh": "{old} → {new}", "en": "{old} → {new}"},
+    "detail_first_seen":     {"zh": "发现机器ID: {mid}", "en": "Discovered machine ID: {mid}"},
+    "oplog_type_all":        {"zh": "全部类型", "en": "All types"},
+    "oplog_type_filter":     {"zh": "筛选事件类型:", "en": "Filter event type:"},
+
     # ── Config ────────────────────────────────────────────────────────────
     "config_action":         {"zh": "配置操作:", "en": "Config action:"},
     "config_edit_settings":  {"zh": "修改全局设置", "en": "Edit global settings"},
