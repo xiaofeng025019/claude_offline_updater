@@ -35,6 +35,9 @@ def _read_records() -> list[dict]:
                     try:
                         record = json.loads(line)
                         record.setdefault("event_type", EVENT_UPDATE)
+                        # Normalize None machine_id to empty string
+                        if record.get("machine_id") is None:
+                            record["machine_id"] = ""
                         records.append(record)
                     except json.JSONDecodeError:
                         continue
@@ -65,7 +68,7 @@ def record_batch(results: list[dict]):
             "timestamp": now,
             "machine_name": r["name"],
             "machine_host": r["host"],
-            "machine_id": r.get("machine_id", ""),
+            "machine_id": r.get("machine_id") or "",
             "from_version": from_ver,
             "to_version": r["to_version"],
             "status": r["status"],
@@ -84,7 +87,7 @@ def record_rollback(machine_name: str, machine_host: str,
         "timestamp": datetime.now().isoformat(),
         "machine_name": machine_name,
         "machine_host": machine_host,
-        "machine_id": machine_id,
+        "machine_id": machine_id or "",
         "from_version": from_version,
         "to_version": to_version,
         "status": status,
@@ -220,7 +223,7 @@ def backfill_events():
                         "timestamp": r["timestamp"],
                         "machine_name": name,
                         "machine_host": host,
-                        "machine_id": r.get("machine_id", ""),
+                        "machine_id": r.get("machine_id") or "",
                         "old_name": prev_name,
                     })
             seen_names.setdefault(name, r["timestamp"])
