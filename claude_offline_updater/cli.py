@@ -836,3 +836,13 @@ def cache_clean(ctx, keep, clean_all):
         return
 
     clean_cache(config.settings, keep=keep)
+
+
+# ── backfill subcommand ────────────────────────────────────────────────────────
+@cli.command("backfill-events")
+@click.pass_context
+def backfill_events(ctx):
+    """Backfill rename/first_seen events from existing history"""
+    from .history import backfill_events as do_backfill
+    do_backfill()
+    success("Backfill complete")
