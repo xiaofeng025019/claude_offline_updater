@@ -652,7 +652,9 @@ def update(ctx, update_all, machines, target_version, dry_run, no_local):
 @cli.command()
 @click.option("--machine", "-m", default=None, help="Filter by machine name")
 @click.option("--type", "-t", "event_type", default=None,
-              type=click.Choice(["update", "add", "remove", "rename", "ip_change", "first_seen"]),
+              type=click.Choice([
+                  "update", "install", "add", "remove",
+                  "rename", "ip_change", "first_seen"]),
               help="Filter by event type")
 @click.option("--limit", "-n", default=50, help="Number of records")
 @click.pass_context
@@ -836,3 +838,13 @@ def cache_clean(ctx, keep, clean_all):
         return
 
     clean_cache(config.settings, keep=keep)
+
+
+# ── backfill subcommand ────────────────────────────────────────────────────────
+@cli.command("backfill-events")
+@click.pass_context
+def backfill_events(ctx):
+    """Backfill rename/first_seen events from existing history"""
+    from .history import backfill_events as do_backfill
+    do_backfill()
+    success("Backfill complete")

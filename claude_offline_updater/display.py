@@ -150,6 +150,19 @@ def show_oplog_table(records: list[dict]):
             duration = r.get("duration_seconds")
             duration_str = f"{duration:.1f}s" if duration else "-"
 
+        elif etype == "install":
+            status = r.get("status", "")
+            if status == "success":
+                event_str = f"[green]✓[/green] {t('event_install')}"
+            elif status == "failed":
+                event_str = f"[red]✗[/red] {t('event_install')}"
+            else:
+                event_str = f"[dim]─[/dim] {t('event_install')}"
+            to_ver = r.get("to_version", "")
+            detail_str = f"→ {to_ver}" if to_ver else ""
+            duration = r.get("duration_seconds")
+            duration_str = f"{duration:.1f}s" if duration else "-"
+
         elif etype == "add":
             event_str = f"[cyan]{t('event_add')}[/cyan]"
             detail_str = ""

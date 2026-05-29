@@ -82,11 +82,30 @@ class TestRecordBatch:
 
     def test_record_batch_includes_event_type(self, history_file):
         results = [
-            {"name": "s1", "host": "10.0.0.1", "to_version": "2.0.0", "status": "success"},
+            {"name": "s1", "host": "10.0.0.1", "to_version": "2.0.0",
+             "status": "success", "from_version": "1.0.0"},
         ]
         record_batch(results)
         records = _read_records()
         assert records[0]["event_type"] == "update"
+
+    def test_record_batch_install_event_type(self, history_file):
+        results = [
+            {"name": "s1", "host": "10.0.0.1", "to_version": "2.0.0",
+             "status": "success", "from_version": "未安装"},
+        ]
+        record_batch(results)
+        records = _read_records()
+        assert records[0]["event_type"] == "install"
+
+    def test_record_batch_install_no_from_version(self, history_file):
+        results = [
+            {"name": "s1", "host": "10.0.0.1", "to_version": "2.0.0",
+             "status": "success"},
+        ]
+        record_batch(results)
+        records = _read_records()
+        assert records[0]["event_type"] == "install"
 
 
 class TestGetHistory:
