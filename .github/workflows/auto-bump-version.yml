@@ -1,0 +1,86 @@
+name: Auto Bump Version
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    # Skip if the push was made by the bot itself (avoid infinite loop)
+    if: "!startsWith(github.event.head_commit.message, 'chore: bump version')"
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-tags: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Detect bump level from commit messages
+        id: detect
+        run: |
+          # Get commits in this push
+          COMMITS=$(git log --format=%B---DELIMITER--- ${{ github.event.before }}..${{ github.event.after }})
+
+          # Write commits to a temp file for the script
+          echo "$COMMITS" > /tmp/commits.txt
+
+          # Detect level
+          LEVEL=""
+          HAS_FEAT=false
+          HAS_FIX=false
+          HAS_BREAKING=false
+
+          while IFS= read -r line; do
+            first_line=$(echo "$line" | head -1)
+            if echo "$line" | grep -qE '^[a-z]+(\(.+\))?!:' || echo "$line" | grep -q 'BREAKING CHANGE'; then
+              HAS_BREAKING=true
+            fi
+            if echo "$first_line" | grep -qE '^feat'; then
+              HAS_FEAT=true
+            fi
+            if echo "$first_line" | grep -qE '^fix'; then
+              HAS_FIX=true
+            fi
+          done < <(echo "$COMMITS" | sed 's/---DELIMITER---/\n/g')
+
+          if [ "$HAS_BREAKING" = true ]; then
+            LEVEL="major"
+          elif [ "$HAS_FEAT" = true ]; then
+            LEVEL="minor"
+          elif [ "$HAS_FIX" = true ]; then
+            LEVEL="patch"
+          fi
+
+          if [ -z "$LEVEL" ]; then
+            echo "No feat/fix commits found — skipping bump"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "Detected bump level: $LEVEL"
+            echo "level=$LEVEL" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Bump version
+        if: steps.detect.outputs.skip != 'true'
+        id: bump
+        run: |
+          NEW_VERSION=$(python scripts/bump_version.py --level ${{ steps.detect.outputs.level }})
+          echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "Bumped to $NEW_VERSION"
+
+      - name: Commit, tag, and push
+        if: steps.detect.outputs.skip != 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add pyproject.toml
+          git commit -m "chore: bump version to ${{ steps.bump.outputs.version }}"
+          git tag "v${{ steps.bump.outputs.version }}"
+          git push
+          git push --tags
