@@ -652,7 +652,9 @@ def update(ctx, update_all, machines, target_version, dry_run, no_local):
 @cli.command()
 @click.option("--machine", "-m", default=None, help="Filter by machine name")
 @click.option("--type", "-t", "event_type", default=None,
-              type=click.Choice(["update", "add", "remove", "rename", "ip_change", "first_seen"]),
+              type=click.Choice([
+                  "update", "install", "add", "remove",
+                  "rename", "ip_change", "first_seen"]),
               help="Filter by event type")
 @click.option("--limit", "-n", default=50, help="Number of records")
 @click.pass_context

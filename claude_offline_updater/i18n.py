@@ -149,6 +149,7 @@ _T: dict[str, dict[str, str]] = {
     "oplog_filter":          {"zh": "查看哪台机器的日志？", "en": "View log for which machine:"},
     "col_event":             {"zh": "事件", "en": "Event"},
     "event_update":          {"zh": "更新", "en": "Update"},
+    "event_install":         {"zh": "初始安装", "en": "Install"},
     "event_add":             {"zh": "添加", "en": "Add"},
     "event_remove":          {"zh": "删除", "en": "Remove"},
     "event_rename":          {"zh": "重命名", "en": "Rename"},

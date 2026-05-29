@@ -9,13 +9,14 @@ from pathlib import Path
 HISTORY_PATH = Path.home() / ".local" / "share" / "claude-update" / "history.jsonl"
 
 EVENT_UPDATE = "update"
+EVENT_INSTALL = "install"
 EVENT_ADD = "add"
 EVENT_REMOVE = "remove"
 EVENT_RENAME = "rename"
 EVENT_IP_CHANGE = "ip_change"
 EVENT_FIRST_SEEN = "first_seen"
 
-VALID_EVENT_TYPES = (EVENT_UPDATE, EVENT_ADD, EVENT_REMOVE,
+VALID_EVENT_TYPES = (EVENT_UPDATE, EVENT_INSTALL, EVENT_ADD, EVENT_REMOVE,
                      EVENT_RENAME, EVENT_IP_CHANGE, EVENT_FIRST_SEEN)
 
 
@@ -56,13 +57,15 @@ def record_batch(results: list[dict]):
     """Batch record update results"""
     now = datetime.now().isoformat()
     for r in results:
+        from_ver = r.get("from_version", "")
+        is_install = not from_ver or from_ver in ("未安装", "Not installed")
         _append_record({
-            "event_type": EVENT_UPDATE,
+            "event_type": EVENT_INSTALL if is_install else EVENT_UPDATE,
             "timestamp": now,
             "machine_name": r["name"],
             "machine_host": r["host"],
             "machine_id": r.get("machine_id", ""),
-            "from_version": r.get("from_version", ""),
+            "from_version": from_ver,
             "to_version": r["to_version"],
             "status": r["status"],
             "detail": r.get("detail", ""),
@@ -77,6 +80,8 @@ def record_event(event_type: str, machine_name: str, machine_host: str,
         raise ValueError(f"Invalid event_type: {event_type}")
     if event_type == EVENT_UPDATE:
         raise ValueError("Use record_batch() for update events")
+    if event_type == EVENT_INSTALL:
+        raise ValueError("Use record_batch() for install events")
 
     record = {
         "event_type": event_type,
@@ -224,6 +229,11 @@ def backfill_events():
     all_records = records + new_events
     for r in all_records:
         r.setdefault("event_type", EVENT_UPDATE)
+        # Reclassify old "update" records with from_version="未安装"/"Not installed" as install
+        if r["event_type"] == EVENT_UPDATE:
+            from_ver = r.get("from_version", "")
+            if not from_ver or from_ver in ("未安装", "Not installed"):
+                r["event_type"] = EVENT_INSTALL
     all_records.sort(key=lambda x: x["timestamp"])
 
     HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
