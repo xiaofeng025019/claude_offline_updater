@@ -24,47 +24,38 @@ jobs:
 
       - name: Detect bump level from commit messages
         id: detect
-        run: |
-          # Get commits in this push
-          COMMITS=$(git log --format=%B---DELIMITER--- ${{ github.event.before }}..${{ github.event.after }})
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const commits = context.event.commits || [];
+            let hasFeat = false, hasFix = false, hasBreaking = false;
 
-          # Write commits to a temp file for the script
-          echo "$COMMITS" > /tmp/commits.txt
+            for (const c of commits) {
+              const msg = c.message || '';
+              const firstLine = msg.split('\n')[0];
+              if (/^[a-z]+(\(.+\))?!:/.test(firstLine) || msg.includes('BREAKING CHANGE')) {
+                hasBreaking = true;
+              }
+              if (/^feat/.test(firstLine)) {
+                hasFeat = true;
+              }
+              if (/^fix/.test(firstLine)) {
+                hasFix = true;
+              }
+            }
 
-          # Detect level
-          LEVEL=""
-          HAS_FEAT=false
-          HAS_FIX=false
-          HAS_BREAKING=false
+            let level = '';
+            if (hasBreaking) level = 'major';
+            else if (hasFeat) level = 'minor';
+            else if (hasFix) level = 'patch';
 
-          while IFS= read -r line; do
-            first_line=$(echo "$line" | head -1)
-            if echo "$line" | grep -qE '^[a-z]+(\(.+\))?!:' || echo "$line" | grep -q 'BREAKING CHANGE'; then
-              HAS_BREAKING=true
-            fi
-            if echo "$first_line" | grep -qE '^feat'; then
-              HAS_FEAT=true
-            fi
-            if echo "$first_line" | grep -qE '^fix'; then
-              HAS_FIX=true
-            fi
-          done < <(echo "$COMMITS" | sed 's/---DELIMITER---/\n/g')
-
-          if [ "$HAS_BREAKING" = true ]; then
-            LEVEL="major"
-          elif [ "$HAS_FEAT" = true ]; then
-            LEVEL="minor"
-          elif [ "$HAS_FIX" = true ]; then
-            LEVEL="patch"
-          fi
-
-          if [ -z "$LEVEL" ]; then
-            echo "No feat/fix commits found — skipping bump"
-            echo "skip=true" >> $GITHUB_OUTPUT
-          else
-            echo "Detected bump level: $LEVEL"
-            echo "level=$LEVEL" >> $GITHUB_OUTPUT
-          fi
+            if (level) {
+              core.setOutput('level', level);
+              core.info(`Detected bump level: ${level}`);
+            } else {
+              core.setOutput('skip', 'true');
+              core.info('No feat/fix commits found — skipping bump');
+            }
 
       - name: Bump version
         if: steps.detect.outputs.skip != 'true'
