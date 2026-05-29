@@ -55,18 +55,15 @@ def select_machines(scan_results: list[dict], target_version: str) -> list[dict]
 
     selected = q.ask()
 
+    # ESC or no selection → go back
     if selected is None:
         return []
 
-    # Check if user actively selected 'Back' (not triggered by select-all)
-    back_selected = _BACK_VALUE in selected
-    machines = [s for s in selected if s != _BACK_VALUE]
-
-    # If only 'Back' is selected (no machines), treat as going back
-    if back_selected and not machines:
+    # If user selected '← 返回' at all → go back regardless of other selections
+    if _BACK_VALUE in selected:
         return []
 
-    return machines
+    return selected
 
 
 def _show_preview_table(results: list[dict], target_version: str):
