@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import paramiko
 
+from . import history
 from .cleaner import cleanup_local_versions, cleanup_old_versions
 from .config import LocalConfig, Settings
 from .display import _prefix, info, success, warn
@@ -197,10 +198,13 @@ def deploy_to_machine(
 
         if not install_ok:
             info(f"{_prefix(name)}{t('deploy_offline')}")
-            vdir = shlex.quote(settings.remote_versions_dir)
-            cbin = shlex.quote(settings.remote_claude_bin)
-            rpath = shlex.quote(remote_path)
-            tver = shlex.quote(target_version)
+            # Paths from config are validated shell-safe at load time
+            # (config._validate_path_chars), so we pass them unquoted to
+            # preserve tilde expansion.
+            vdir = settings.remote_versions_dir
+            cbin = settings.remote_claude_bin
+            rpath = remote_path
+            tver = target_version
             deploy_cmd = (
                 f"mkdir -p {vdir} && "
                 f"mkdir -p $(dirname {cbin}) && "
@@ -219,7 +223,7 @@ def deploy_to_machine(
 
         info(f"{_prefix(name)}{t('verifying_version')}")
         stdin, stdout, stderr = client.exec_command(
-            f"{shlex.quote(settings.remote_claude_bin)} --version 2>/dev/null", timeout=10,
+            f"{settings.remote_claude_bin} --version 2>/dev/null", timeout=10,
         )
         installed = stdout.read().decode().strip()
         match = re.search(r'(\d+\.\d+\.\d+)', installed)
@@ -234,7 +238,7 @@ def deploy_to_machine(
                     "duration_seconds": time.time() - start_time}
 
         cleanup_old_versions(client, settings, label=name)
-        client.exec_command(f"rm -rf {shlex.quote(settings.remote_tmp_dir)}", timeout=10)
+        client.exec_command(f"rm -rf {settings.remote_tmp_dir}", timeout=10)
 
         success(f"{_prefix(name)}{t('update_complete')}: {current_ver} → {target_version}")
         return {**base_result, "status": "success",
@@ -354,7 +358,7 @@ def _get_current_symlink(client: paramiko.SSHClient, claude_bin: str) -> str | N
     """Get remote claude symlink target path (for rollback)"""
     try:
         stdin, stdout, stderr = client.exec_command(
-            f"readlink -f {shlex.quote(claude_bin)} 2>/dev/null", timeout=10,
+            f"readlink -f {claude_bin} 2>/dev/null", timeout=10,
         )
         target = stdout.read().decode().strip()
         return target if target and target != claude_bin else None
@@ -366,13 +370,42 @@ def _rollback_symlink(client: paramiko.SSHClient, claude_bin: str, target: str, 
     """Rollback symlink to specified target"""
     prefix = _prefix(label)
     try:
+        # target comes from `readlink` output (remote-controlled). Refuse
+        # to pass unquoted if it has shell metacharacters.
+        if not _is_safe_remote_path(target):
+            raise ValueError(f"unsafe rollback target: {target!r}")
         stdin, stdout, stderr = client.exec_command(
-            f"ln -sf {shlex.quote(target)} {shlex.quote(claude_bin)}", timeout=10,
+            f"ln -sf {target} {claude_bin}", timeout=10,
         )
         # Wait for ln -sf to actually complete on the remote before returning
         stdout.channel.recv_exit_status()
     except Exception as e:
-        warn(f"{prefix}Rollback failed: {e}")
+        warn(f"{prefix}{t('rollback_symlink_failed', error=e)}")
+
+
+def _auto_pin_on_rollback(result: dict, pin_dedup_days: int = 30):
+    """If rollback was a clean success, write an EVENT_PIN record.
+    Independent of any string status convention — single check.
+    Silent skip on dedup (auto path is non-interactive).
+    Never raises — pin write failure must not mask a successful rollback."""
+    if result.get("status") != "success":
+        return
+    machine_id = result.get("machine_id", "")
+    target_version = result.get("to_version", "")
+    if not machine_id or not target_version:
+        return
+    try:
+        if history.has_recent_pin(machine_id, target_version, days=pin_dedup_days):
+            return
+        history.record_event(
+            history.EVENT_PIN,
+            machine_name=result["name"],
+            machine_host=result["host"],
+            machine_id=machine_id,
+            version=target_version,
+        )
+    except Exception as e:  # noqa: BLE001 — never let pin failure mask rollback success
+        warn(t("auto_pin_failed", prefix=_prefix(result.get('name', '?')), error=e))
 
 
 def _scp_with_limit(local_path: str, host: str, port: int, user: str,
@@ -403,17 +436,33 @@ def _ssh_host_key_option(policy: str) -> str:
 
 
 def _resolve_remote_path(client: paramiko.SSHClient, path: str) -> str:
-    """Resolve ~ in remote paths — SFTP doesn't expand tilde"""
+    """Resolve ~ in remote paths — SFTP doesn't expand tilde, so ask the
+    remote shell to expand it. Path must not contain shell metacharacters
+    (validated at config load). Returns the original path if no ~ or if
+    expansion fails."""
     if not path.startswith("~"):
+        return path
+    if not _is_safe_remote_path(path):
         return path
     try:
         stdin, stdout, stderr = client.exec_command(
-            f"echo {shlex.quote(path)}", timeout=5,
+            f"echo {path}", timeout=5,
         )
         resolved = stdout.read().decode().strip()
         return resolved if resolved else path
     except Exception:
         return path
+
+
+def _is_safe_remote_path(path: str) -> bool:
+    """Path contains only chars safe to pass unquoted to a remote shell.
+
+    Tilde expansion requires the path to be passed unquoted (shlex.quote
+    would single-quote and suppress expansion). The risk is shell injection
+    if a user-supplied path contains `;`, `|`, `$`, etc. Since config paths
+    are user-controlled YAML, we whitelist the allowed character set.
+    """
+    return all(c.isalnum() or c in "/._-~" for c in path)
 
 
 def _ensure_remote_dir(client: paramiko.SSHClient, path: str):
@@ -521,7 +570,7 @@ def rollback_local(
     # Verify target binary exists
     if not os.path.isfile(target_path) or not os.access(target_path, os.X_OK):
         return {**base_result, "status": "failed",
-                "detail": f"Version {target_version} not found in {versions_dir}",
+                "detail": t("version_not_in_local_dir", version=target_version, dir=versions_dir),
                 "duration_seconds": time.time() - start_time}
 
     # Replace symlink atomically via ln -sf
@@ -561,8 +610,10 @@ def rollback_local(
                 "duration_seconds": time.time() - start_time}
 
     success(f"{_prefix(name)}{t('rollback_success')}: {current_version} → {target_version}")
-    return {**base_result, "status": "success",
-            "duration_seconds": time.time() - start_time}
+    result = {**base_result, "status": "success",
+              "duration_seconds": time.time() - start_time}
+    _auto_pin_on_rollback(result, pin_dedup_days=settings.pin_dedup_days)
+    return result
 
 
 def rollback_to_machine(
@@ -592,9 +643,11 @@ def rollback_to_machine(
     try:
         client = _ssh_connect(host, port, user, settings)
 
-        vdir = shlex.quote(settings.remote_versions_dir)
-        cbin = shlex.quote(settings.remote_claude_bin)
-        tver = shlex.quote(target_version)
+        # Paths are validated shell-safe at config load. Pass unquoted
+        # to preserve tilde expansion.
+        vdir = settings.remote_versions_dir
+        cbin = settings.remote_claude_bin
+        tver = target_version
 
         # Verify target binary exists on remote
         stdin, stdout, stderr = client.exec_command(
@@ -603,7 +656,7 @@ def rollback_to_machine(
         check = stdout.read().decode().strip()
         if check != "ok":
             return {**base_result, "status": "failed",
-                    "detail": f"Version {target_version} not found on remote",
+                    "detail": t("version_not_on_remote", version=target_version),
                     "duration_seconds": time.time() - start_time}
 
         # Replace symlink
@@ -632,8 +685,10 @@ def rollback_to_machine(
                     "duration_seconds": time.time() - start_time}
 
         success(f"{_prefix(name)}{t('rollback_success')}: {current_version} → {target_version}")
-        return {**base_result, "status": "success",
-                "duration_seconds": time.time() - start_time}
+        result = {**base_result, "status": "success",
+                  "duration_seconds": time.time() - start_time}
+        _auto_pin_on_rollback(result, pin_dedup_days=settings.pin_dedup_days)
+        return result
 
     except Exception as e:
         return {**base_result, "status": "failed",

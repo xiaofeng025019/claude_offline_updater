@@ -203,15 +203,25 @@ def show_oplog_table(records: list[dict]):
             detail_str = t("detail_first_seen", mid=f"{mid[:8]}..." if mid else "-")
             duration_str = "-"
 
+        elif etype == "pin":
+            event_str = f"[green]📌 {t('event_pin')}[/green]"
+            detail_str = r.get("version", "")
+            duration_str = "-"
+
+        elif etype == "unpin":
+            event_str = f"[dim]📌 {t('event_unpin')}[/dim]"
+            detail_str = r.get("version", "")
+            duration_str = "-"
+
         else:
             event_str = etype
             detail_str = "-"
             duration_str = "-"
 
         table.add_row(
-            r["timestamp"][:19] if r.get("timestamp") else "-",
-            r["machine_name"],
-            r["machine_host"],
+            r.get("timestamp", "")[:19] if r.get("timestamp") else "-",
+            r.get("machine_name", "?"),
+            r.get("machine_host", "?"),
             event_str,
             detail_str,
             duration_str,
@@ -244,6 +254,7 @@ def show_config_panels(config):
          "0 (unlimited)"),
         ("ssh_host_key_policy", s.ssh_host_key_policy,
          DEFAULTS.get("ssh_host_key_policy", "")),
+        ("pin_dedup_days", f"{s.pin_dedup_days}d", f"{DEFAULTS.get('pin_dedup_days', '')}d"),
         ("download_base", s.download_base, ""),
         ("local_cache_dir", s.local_cache_dir, ""),
         ("remote_claude_bin", s.remote_claude_bin, ""),

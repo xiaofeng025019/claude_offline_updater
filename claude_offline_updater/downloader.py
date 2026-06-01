@@ -137,9 +137,15 @@ def download_binary(settings: Settings, version: str, output_path: str):
     url = f"{settings.download_base}/{version}/{settings.platform}/claude"
     info(f"{t('downloading')} Claude Code {version} ({t('download_cache_miss')}) ...")
 
+    last_error = t("download_empty")
     for attempt in range(1, settings.max_retries + 1):
+        is_last = attempt == settings.max_retries
         try:
             _download_with_progress(url, output_path, settings.download_timeout)
+        except Exception as e:
+            last_error = str(e)
+            Path(output_path).unlink(missing_ok=True)
+        else:
             if Path(output_path).stat().st_size > 0:
                 size_mb = Path(output_path).stat().st_size / (1024 * 1024)
                 success(f"{t('download_complete')}: {size_mb:.1f}MB")
@@ -148,20 +154,23 @@ def download_binary(settings: Settings, version: str, output_path: str):
                 info(f"{t('cached_to')}: {cache_target}")
                 clean_cache(settings)
                 return
-            error(t("download_empty"))
-        except Exception as e:
-            if attempt < settings.max_retries:
-                warn(t("download_retrying", attempt=attempt, max_retries=settings.max_retries))
-                Path(output_path).unlink(missing_ok=True)
-                time.sleep(3)
-            else:
-                error(
-                    f"{t('download_failed')}（"
-                    f"{t('version_unavailable_retry')} "
-                    f"{settings.max_retries} {t('version_times')}）: {e}"
-                )
-                Path(output_path).unlink(missing_ok=True)
-                raise DownloadError(str(e)) from None
+            # Empty file with no exception
+            last_error = t("download_empty")
+            error(last_error)
+            Path(output_path).unlink(missing_ok=True)
+
+        if not is_last:
+            warn(t("download_retrying", attempt=attempt, max_retries=settings.max_retries))
+            time.sleep(3)
+            continue
+
+        # Final attempt failed
+        error(
+            f"{t('download_failed')}（"
+            f"{t('version_unavailable_retry')} "
+            f"{settings.max_retries} {t('version_times')}）: {last_error}"
+        )
+        raise DownloadError(last_error)
 
 
 def _download_with_progress(url: str, output_path: str, timeout: int):

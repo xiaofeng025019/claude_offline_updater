@@ -18,6 +18,22 @@ def get_lang() -> str:
     return _lang
 
 
+def not_installed_sentinels() -> tuple[str, ...]:
+    """All known translations of 'not installed', for matching historical records.
+
+    Use this instead of hard-coding ("未安装", "Not installed") so adding a
+    third language in this module automatically extends the match set.
+    """
+    keys = ("status_not_installed",)
+    out = []
+    for k in keys:
+        entry = _T.get(k, {})
+        for _lang, text in entry.items():
+            if text not in out:
+                out.append(text)
+    return tuple(out)
+
+
 # ── Translation dictionary ───────────────────────────────────────────────────
 # key: translation ID, value: {zh: "Chinese", en: "English"}
 _T: dict[str, dict[str, str]] = {
@@ -106,6 +122,23 @@ _T: dict[str, dict[str, str]] = {
     "remote_clean_done":     {"zh": "远程版本清理完成", "en": "Remote version cleanup complete"},
     "local_clean_done":      {"zh": "本地版本清理完成", "en": "Local version cleanup complete"},
 
+    # ── Deployer error messages (previously hardcoded English) ─────────────
+    "rollback_symlink_failed":  {"zh": "回滚符号链接失败: {error}",
+                                "en": "Rollback symlink failed: {error}"},
+    "auto_pin_failed":          {"zh": "{prefix}自动标记失败（回退本身已成功）: {error}",
+                                "en": "{prefix}Auto-pin failed (rollback itself succeeded): {error}"},
+    "version_not_in_local_dir": {"zh": "在 {dir} 中未找到版本 {version}",
+                                "en": "Version {version} not found in {dir}"},
+    "version_not_on_remote":    {"zh": "远程机器上未找到版本 {version}",
+                                "en": "Version {version} not found on remote"},
+
+    # ── CLI error messages (previously hardcoded English) ──────────────────
+    "specify_machine_or_all":  {"zh": "请指定 --machine 或 --all",
+                                "en": "Specify --machine or --all"},
+    "version_not_on_machine":  {"zh": "在 {name} 上未找到版本 {version}",
+                                "en": "Version {version} not found on {name}"},
+    "backfill_complete":       {"zh": "回填完成", "en": "Backfill complete"},
+
     # ── Selection ─────────────────────────────────────────────────────────
     "select_prompt":         {"zh": "选择要更新的机器（空格选中/取消，回车确认）:",
                               "en": "Select machines to update (space to toggle, enter to confirm):"},
@@ -155,6 +188,8 @@ _T: dict[str, dict[str, str]] = {
     "event_rename":          {"zh": "重命名", "en": "Rename"},
     "event_ip_change":       {"zh": "IP变更", "en": "IP Change"},
     "event_first_seen":      {"zh": "首次发现", "en": "First Seen"},
+    "event_pin":             {"zh": "标记可用", "en": "Pin"},
+    "event_unpin":           {"zh": "取消标记", "en": "Unpin"},
     "event_rollback":        {"zh": "回退", "en": "Rollback"},
     "detail_renamed":        {"zh": "{old} → {new}", "en": "{old} → {new}"},
     "detail_ip_changed":     {"zh": "{old} → {new}", "en": "{old} → {new}"},
@@ -174,6 +209,28 @@ _T: dict[str, dict[str, str]] = {
     "rollback_failed":       {"zh": "回退失败: {detail}", "en": "Rollback failed: {detail}"},
     "rollback_no_versions":  {"zh": "没有可回退的版本", "en": "No versions available for rollback"},
     "rollback_already":      {"zh": "当前已是该版本", "en": "Already on this version"},
+
+    # ── Pin / Unpin ────────────────────────────────────────────────────────
+    "pin_recorded":          {"zh": "已标记为可用版本: {machine} @ {version}",
+                              "en": "Pinned: {machine} @ {version}"},
+    "unpin_recorded":        {"zh": "已取消标记: {machine} @ {version}",
+                              "en": "Unpinned: {machine} @ {version}"},
+    "pin_no_such_machine":   {"zh": "机器不存在: {name}",
+                              "en": "Machine not found: {name}"},
+    "pin_version_missing":   {"zh": "机器 {name} 上未找到版本 {version}",
+                              "en": "Version {version} not installed on {name}"},
+    "unpin_no_record":       {"zh": "{name} @ {version} 没有 pin 记录",
+                              "en": "No pin record for {name} @ {version}"},
+    "pin_already_recent":    {"zh": "{machine} @ {version} 已在 {days} 天内标记过，跳过",
+                              "en": "{machine} @ {version} already pinned within {days} days, skipping"},
+    "pin_force":             {"zh": "强制覆盖 {days} 天去重",
+                              "en": "Force pin, ignoring {days}-day dedup"},
+    "unpin_already":         {"zh": "{name} @ {version} 已处于未标记状态",
+                              "en": "{name} @ {version} is already unpinned"},
+    "cli_help_machine":      {"zh": "config 中的机器名", "en": "Machine name from config"},
+    "cli_help_pin_version":  {"zh": "要标记的版本", "en": "Version to pin"},
+    "cli_help_unpin_version":{"zh": "要取消标记的版本", "en": "Version to unpin"},
+    "cli_help_pin_force":    {"zh": "强制覆盖 30 天去重", "en": "Bypass 30-day dedup check"},
 
     # ── Config ────────────────────────────────────────────────────────────
     "config_action":         {"zh": "配置操作:", "en": "Config action:"},

@@ -4,6 +4,8 @@ from claude_offline_updater.config import Settings
 from claude_offline_updater.deployer import (
     _ensure_remote_dir,
     _get_current_symlink,
+    _is_safe_remote_path,
+    _resolve_remote_path,
     _rollback_symlink,
     _ssh_connect,
     deploy_all,
@@ -387,6 +389,57 @@ class TestHelperFunctions:
         cmd = client.exec_command.call_args[0][0]
         assert "mkdir -p" in cmd
 
+    def test_resolve_remote_path_no_tilde_passthrough(self):
+        client = MagicMock()
+        assert _resolve_remote_path(client, "/usr/local/bin/claude") == "/usr/local/bin/claude"
+        client.exec_command.assert_not_called()
+
+    def test_is_safe_remote_path_whitelist(self):
+        # All whitelisted chars are safe
+        assert _is_safe_remote_path("~/.local/bin/claude")
+        assert _is_safe_remote_path("/usr/local/bin/claude-1.0.0")
+        # Shell metacharacters are not
+        assert not _is_safe_remote_path("/tmp/x;evil")
+        assert not _is_safe_remote_path("`cmd`")
+        assert not _is_safe_remote_path("$VAR")
+        assert not _is_safe_remote_path("a|b")
+        assert not _is_safe_remote_path("a&b")
+
+    def test_resolve_remote_path_expands_tilde(self):
+        client = MagicMock()
+        stdout = MagicMock()
+        stdout.read.return_value = b"/home/user/.local/bin/claude\n"
+        client.exec_command.return_value = (MagicMock(), stdout, MagicMock())
+        assert _resolve_remote_path(client, "~/.local/bin/claude") == "/home/user/.local/bin/claude"
+        # Critical: command must NOT single-quote the path (which would
+        # prevent tilde expansion)
+        cmd = client.exec_command.call_args[0][0]
+        assert "echo" in cmd
+        assert "~/.local/bin/claude" in cmd
+        assert "'" not in cmd  # no single-quotes that would suppress expansion
+
+    def test_resolve_remote_path_rejects_unsafe(self):
+        client = MagicMock()
+        # Path with shell metachar — must not be passed to remote shell
+        assert _resolve_remote_path(client, "/tmp/x;rm -rf /") == "/tmp/x;rm -rf /"
+        client.exec_command.assert_not_called()
+
+    def test_rollback_symlink_waits_for_completion(self):
+        # Bug fix: was returning before ln -sf finished
+        client = MagicMock()
+        channel = MagicMock()
+        stdout = MagicMock()
+        stdout.channel = channel
+        client.exec_command.return_value = (MagicMock(), stdout, MagicMock())
+        _rollback_symlink(client, "~/.local/bin/claude", "/old/target", label="x")
+        channel.recv_exit_status.assert_called_once()
+
+    def test_rollback_symlink_rejects_unsafe_target(self):
+        client = MagicMock()
+        # target comes from readlink output — must be sanitized
+        _rollback_symlink(client, "~/.local/bin/claude", "/tmp/x;evil", label="x")
+        client.exec_command.assert_not_called()
+
 
 class TestRollbackLocal:
     def test_skips_when_same_version(self, sample_local, sample_settings):
@@ -610,3 +663,115 @@ class TestRollbackAll:
             )
             names = [r["name"] for r in results]
             assert names.index("localhost") < names.index("s1")
+
+
+class TestAutoPinOnRollback:
+    """Auto-pin is triggered by the deployer on rollback success via
+    _auto_pin_on_rollback helper. These tests mock history.record_event
+    to verify it's called with the right args (and not called on failure)."""
+
+    @patch("claude_offline_updater.history.record_event")
+    def test_rollback_local_success_triggers_auto_pin(
+        self, mock_record, sample_local, sample_settings,
+    ):
+        from claude_offline_updater.history import EVENT_PIN
+        # rollback_local checks: os.path.isfile(target), os.access(target),
+        # and runs ln -sf + --version subprocesses. Mock all of them.
+        with patch("claude_offline_updater.deployer.os.path.isfile", return_value=True), \
+             patch("claude_offline_updater.deployer.os.access", return_value=True), \
+             patch("claude_offline_updater.deployer.subprocess.run") as mock_run, \
+             patch("claude_offline_updater.deployer.cleanup_local_versions"):
+            install_proc = MagicMock(returncode=0)
+            version_proc = MagicMock(returncode=0, stdout="1.0.0")
+            mock_run.side_effect = [install_proc, version_proc]
+
+            from claude_offline_updater.deployer import rollback_local
+            out = rollback_local("2.0.0", "1.0.0", sample_local, sample_settings,
+                                 machine_id="m1")
+            assert out["status"] == "success"
+            pin_calls = [c for c in mock_record.call_args_list
+                         if c.args and c.args[0] == EVENT_PIN]
+            assert len(pin_calls) == 1
+            assert pin_calls[0].kwargs["version"] == "1.0.0"
+            assert pin_calls[0].kwargs["machine_id"] == "m1"
+
+    @patch("claude_offline_updater.history.has_recent_pin", return_value=True)
+    @patch("claude_offline_updater.history.record_event")
+    def test_rollback_success_skips_pin_when_recent_exists(
+        self, mock_record, mock_recent, sample_local, sample_settings,
+    ):
+        with patch("claude_offline_updater.deployer.os.path.isfile", return_value=True), \
+             patch("claude_offline_updater.deployer.os.access", return_value=True), \
+             patch("claude_offline_updater.deployer.subprocess.run") as mock_run, \
+             patch("claude_offline_updater.deployer.cleanup_local_versions"):
+            install_proc = MagicMock(returncode=0)
+            version_proc = MagicMock(returncode=0, stdout="1.0.0")
+            mock_run.side_effect = [install_proc, version_proc]
+
+            from claude_offline_updater.deployer import rollback_local
+            out = rollback_local("2.0.0", "1.0.0", sample_local, sample_settings,
+                                 machine_id="m1")
+            assert out["status"] == "success"
+            mock_record.assert_not_called()  # skipped due to recent pin
+
+    def test_rollback_failure_does_not_pin(self, sample_local, sample_settings):
+        # current == target → returns "skipped" (not success), no pin
+        from claude_offline_updater.deployer import rollback_local
+        with patch("claude_offline_updater.history.record_event") as mock_record:
+            out = rollback_local("1.0.0", "1.0.0", sample_local, sample_settings,
+                                 machine_id="m1")
+            assert out["status"] == "skipped"
+            mock_record.assert_not_called()
+
+    def test_rollback_local_real_failure_does_not_pin(self, sample_local, sample_settings):
+        # Target binary missing in versions_dir → "failed" (not success), no pin
+        from claude_offline_updater.deployer import rollback_local
+        with patch("claude_offline_updater.deployer.os.path.isfile", return_value=False), \
+             patch("claude_offline_updater.history.record_event") as mock_record:
+            out = rollback_local("2.0.0", "1.0.0", sample_local, sample_settings,
+                                 machine_id="m1")
+            assert out["status"] == "failed"
+            mock_record.assert_not_called()
+
+    @patch("claude_offline_updater.history.record_event")
+    def test_rollback_to_machine_success_triggers_auto_pin(
+        self, mock_record, sample_settings, sample_machine,
+    ):
+        """Auto-pin fires when rollback_to_machine returns success.
+
+        Tests the helper directly rather than threading through rollback_all
+        (whose ThreadPoolExecutor closure bypasses function-level patches)."""
+        from claude_offline_updater.deployer import _auto_pin_on_rollback
+
+        _auto_pin_on_rollback({
+            "name": sample_machine.name, "host": sample_machine.host,
+            "from_version": "2.0.0", "to_version": "1.0.0",
+            "machine_id": "m2", "status": "success",
+            "duration_seconds": 1.0,
+        })
+        from claude_offline_updater.history import EVENT_PIN
+        pin_calls = [c for c in mock_record.call_args_list
+                     if c.args and c.args[0] == EVENT_PIN]
+        assert len(pin_calls) == 1
+        assert pin_calls[0].kwargs["version"] == "1.0.0"
+        assert pin_calls[0].kwargs["machine_id"] == "m2"
+
+    @patch("claude_offline_updater.history.record_event")
+    def test_auto_pin_failure_does_not_mask_rollback_success(
+        self, mock_record, sample_local, sample_settings,
+    ):
+        """If record_event raises (e.g., disk full), rollback success must not be masked."""
+        mock_record.side_effect = OSError("disk full")
+        with patch("claude_offline_updater.deployer.os.path.isfile", return_value=True), \
+             patch("claude_offline_updater.deployer.os.access", return_value=True), \
+             patch("claude_offline_updater.deployer.subprocess.run") as mock_run, \
+             patch("claude_offline_updater.deployer.cleanup_local_versions"):
+            install_proc = MagicMock(returncode=0)
+            version_proc = MagicMock(returncode=0, stdout="1.0.0")
+            mock_run.side_effect = [install_proc, version_proc]
+
+            from claude_offline_updater.deployer import rollback_local
+            # Must not raise — pin failure is swallowed
+            out = rollback_local("2.0.0", "1.0.0", sample_local, sample_settings,
+                                 machine_id="m1")
+            assert out["status"] == "success"

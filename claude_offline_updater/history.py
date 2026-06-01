@@ -1,10 +1,12 @@
 """JSONL operation log tracking (generalized from update history)"""
 
+import contextlib
 import fcntl
 import json
 import os
+import stat
 import tempfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 HISTORY_PATH = Path.home() / ".local" / "share" / "claude-update" / "history.jsonl"
@@ -17,9 +19,12 @@ EVENT_REMOVE = "remove"
 EVENT_RENAME = "rename"
 EVENT_IP_CHANGE = "ip_change"
 EVENT_FIRST_SEEN = "first_seen"
+EVENT_PIN = "pin"
+EVENT_UNPIN = "unpin"
 
 VALID_EVENT_TYPES = (EVENT_UPDATE, EVENT_INSTALL, EVENT_ROLLBACK, EVENT_ADD,
-                     EVENT_REMOVE, EVENT_RENAME, EVENT_IP_CHANGE, EVENT_FIRST_SEEN)
+                     EVENT_REMOVE, EVENT_RENAME, EVENT_IP_CHANGE, EVENT_FIRST_SEEN,
+                     EVENT_PIN, EVENT_UNPIN)
 
 
 def _read_records() -> list[dict]:
@@ -50,7 +55,13 @@ def _read_records() -> list[dict]:
 def _append_record(record: dict):
     """Append a single record"""
     HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    # Restrict directory + file to owner-only (the file holds machine hostnames,
+    # IPs, and machine_ids — should not be world-readable).
+    with contextlib.suppress(OSError):  # best effort; e.g. on Windows
+        HISTORY_PATH.parent.chmod(stat.S_IRWXU)  # 0o700
     with open(HISTORY_PATH, "a", encoding="utf-8") as f:
+        with contextlib.suppress(OSError):
+            os.chmod(HISTORY_PATH, stat.S_IRUSR | stat.S_IWUSR)  # 0o600
         fcntl.flock(f, fcntl.LOCK_EX)
         try:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -60,10 +71,11 @@ def _append_record(record: dict):
 
 def record_batch(results: list[dict]):
     """Batch record update results"""
+    from .i18n import not_installed_sentinels
     now = datetime.now().isoformat()
     for r in results:
         from_ver = r.get("from_version", "")
-        is_install = not from_ver or from_ver in ("未安装", "Not installed")
+        is_install = not from_ver or from_ver in not_installed_sentinels()
         _append_record({
             "event_type": EVENT_INSTALL if is_install else EVENT_UPDATE,
             "timestamp": now,
@@ -99,7 +111,7 @@ def record_rollback(machine_name: str, machine_host: str,
 
 def record_event(event_type: str, machine_name: str, machine_host: str,
                  machine_id: str = "", *, old_name: str = "",
-                 old_host: str = ""):
+                 old_host: str = "", version: str = ""):
     """Record a non-update operation event"""
     if event_type not in VALID_EVENT_TYPES:
         raise ValueError(f"Invalid event_type: {event_type}")
@@ -109,6 +121,8 @@ def record_event(event_type: str, machine_name: str, machine_host: str,
         raise ValueError("Use record_batch() for install events")
     if event_type == EVENT_ROLLBACK:
         raise ValueError("Use record_rollback() for rollback events")
+    if event_type in (EVENT_PIN, EVENT_UNPIN) and not version:
+        raise ValueError(f"record_event({event_type}, ...) requires version=")
     if event_type == EVENT_RENAME and not old_name:
         raise ValueError("record_event(EVENT_RENAME, ...) requires old_name=")
     if event_type == EVENT_IP_CHANGE and not old_host:
@@ -125,6 +139,8 @@ def record_event(event_type: str, machine_name: str, machine_host: str,
         record["old_name"] = old_name
     elif event_type == EVENT_IP_CHANGE:
         record["old_host"] = old_host
+    elif event_type in (EVENT_PIN, EVENT_UNPIN):
+        record["version"] = version
 
     _append_record(record)
 
@@ -186,6 +202,8 @@ def backfill_machine_id(machine_name: str, machine_host: str, machine_id: str):
                 for r in records:
                     tmp.write(json.dumps(r, ensure_ascii=False) + "\n")
                 tmp_path = tmp.name
+            with contextlib.suppress(OSError):
+                os.chmod(tmp_path, stat.S_IRUSR | stat.S_IWUSR)
             os.replace(tmp_path, HISTORY_PATH)
         finally:
             fcntl.flock(lockf, fcntl.LOCK_UN)
@@ -261,13 +279,19 @@ def backfill_events():
                 })
 
     # Merge old + new records, ensure event_type on all, sort by time, rewrite file
+    from .i18n import not_installed_sentinels
+    not_installed = not_installed_sentinels()
     all_records = records + new_events
     for r in all_records:
         r.setdefault("event_type", EVENT_UPDATE)
-        # Reclassify old "update" records with from_version="未安装"/"Not installed" as install
-        if r["event_type"] == EVENT_UPDATE:
+        # Reclassify old "update" records whose from_version matches a
+        # known "not installed" sentinel in any supported language.
+        # Only successful installs get reclassified — failed installs
+        # keep their original "update" event_type so the oplog shows the
+        # correct status.
+        if r["event_type"] == EVENT_UPDATE and r.get("status") == "success":
             from_ver = r.get("from_version", "")
-            if not from_ver or from_ver in ("未安装", "Not installed"):
+            if not from_ver or from_ver in not_installed:
                 r["event_type"] = EVENT_INSTALL
     all_records.sort(key=lambda x: x["timestamp"])
 
@@ -283,6 +307,46 @@ def backfill_events():
                 for r in all_records:
                     tmp.write(json.dumps(r, ensure_ascii=False) + "\n")
                 tmp_path = tmp.name
+            with contextlib.suppress(OSError):
+                os.chmod(tmp_path, stat.S_IRUSR | stat.S_IWUSR)
             os.replace(tmp_path, HISTORY_PATH)
         finally:
             fcntl.flock(lockf, fcntl.LOCK_UN)
+
+
+def has_recent_pin(machine_id: str, version: str, days: int = 30) -> bool:
+    """Return True if the (machine_id, version) pair is currently pinned
+    (i.e., the most recent pin/unpin event is a `pin`) and that pin
+    happened within `days` days.
+
+    This correctly handles pin → unpin → pin sequences: if the latest
+    event is an unpin, has_recent_pin returns False (the user can
+    re-pin freely). If the latest is a pin, dedup applies.
+    """
+    if not machine_id or not version:
+        return False
+    current = latest_pin(machine_id, version)
+    if not current or current.get("event_type") != EVENT_PIN:
+        return False
+    try:
+        ts = datetime.fromisoformat(current["timestamp"])
+    except (ValueError, TypeError, KeyError):
+        return False
+    return ts >= datetime.now() - timedelta(days=days)
+
+
+def latest_pin(machine_id: str, version: str) -> dict | None:
+    """Return the most recent pin/unpin event for (machine_id, version),
+    or None. The returned event's type reflects current state. Returns a
+    copy of the record so callers can mutate without aliasing the log."""
+    if not machine_id or not version:
+        return None
+    latest = None
+    for r in _read_records():
+        if (r.get("event_type") in (EVENT_PIN, EVENT_UNPIN)
+                and r.get("machine_id") == machine_id
+                and r.get("version") == version
+                and (latest is None
+                     or r.get("timestamp", "") > latest.get("timestamp", ""))):
+            latest = r
+    return dict(latest) if latest is not None else None

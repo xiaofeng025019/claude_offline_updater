@@ -27,12 +27,32 @@ DEFAULTS = {
     "scp_bandwidth_limit": 0,
     "ssh_host_key_policy": "warn",
     "lang": "en",
+    "pin_dedup_days": 30,
 }
 
 _PATH_FIELDS = {
     "remote_claude_bin", "remote_versions_dir", "local_cache_dir",
     "claude_bin", "versions_dir",
 }
+
+# Characters allowed in a config path that will be passed unquoted to a
+# remote shell (deployer.py uses unquoted paths for tilde expansion).
+# Whitelist keeps out shell metacharacters while permitting ~, /, ., -, _.
+_PATH_SAFE_CHARS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                       "0123456789/._-~")
+
+
+def _validate_path_chars(field: str, value: str):
+    """Raise ValueError if `value` contains characters that would be
+    dangerous when passed unquoted to a remote shell."""
+    if not value:
+        return
+    bad = sorted({c for c in value if c not in _PATH_SAFE_CHARS})
+    if bad:
+        raise ValueError(
+            f"{field} contains shell-unsafe characters: {bad!r}. "
+            f"Allowed: alphanumerics, /, ., -, _, ~"
+        )
 
 
 def _shorten_path(path: str) -> str:
@@ -79,6 +99,7 @@ class Settings:
     scp_bandwidth_limit: int = 0
     ssh_host_key_policy: str = "warn"
     lang: str = "en"
+    pin_dedup_days: int = 30
 
 
 @dataclass
@@ -180,6 +201,15 @@ class Config:
                 machine_id=m.get("machine_id"),
             ))
 
+        # Validate that path fields contain only shell-safe characters
+        # (used unquoted in deployer.py for tilde expansion)
+        _validate_path_chars("settings.remote_claude_bin", settings.remote_claude_bin)
+        _validate_path_chars("settings.remote_versions_dir", settings.remote_versions_dir)
+        _validate_path_chars("settings.remote_tmp_dir", settings.remote_tmp_dir)
+        _validate_path_chars("settings.local_cache_dir", settings.local_cache_dir)
+        _validate_path_chars("local.claude_bin", local.claude_bin)
+        _validate_path_chars("local.versions_dir", local.versions_dir)
+
         return cls(settings=settings, local=local, machines=machines, config_path=config_path)
 
     def save(self):
@@ -201,6 +231,7 @@ class Config:
                 "scp_bandwidth_limit": self.settings.scp_bandwidth_limit,
                 "ssh_host_key_policy": self.settings.ssh_host_key_policy,
                 "lang": self.settings.lang,
+                "pin_dedup_days": self.settings.pin_dedup_days,
             },
             "local": {
                 "enabled": self.local.enabled,

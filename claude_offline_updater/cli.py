@@ -9,7 +9,15 @@ from . import __version__, get_version_display
 from .config import DEFAULTS, Config, Machine, _shorten_path
 from .display import _prefix, console, error, header, info, show_scan_results, success, warn
 from .downloader import DownloadError
+from .history import (
+    EVENT_PIN,
+    EVENT_UNPIN,
+    has_recent_pin,
+    latest_pin,
+    record_event,
+)
 from .i18n import get_lang, set_lang, t
+from .scanner import list_installed_versions_local, list_installed_versions_remote
 
 
 def _bind_esc(question):
@@ -285,7 +293,7 @@ def _interactive_rollback(ctx):
                 detail=r.get("detail", ""),
                 duration_seconds=r.get("duration_seconds", 0),
             )
-            error(f"{t('rollback_failed')}: {r.get('detail', '')}")
+            error(t("rollback_failed", detail=r.get("detail", "")))
 
     from .display import show_update_results
     show_update_results(results)
@@ -470,6 +478,7 @@ def _edit_settings(config):
          str, "~/.local/share/claude/versions"),
         ("remote_tmp_dir", s.remote_tmp_dir, str, "/tmp/claude-update"),
         ("ssh_host_key_policy", s.ssh_host_key_policy, str, "warn"),
+        ("pin_dedup_days", str(s.pin_dedup_days), int, "30"),
     ]
 
     choices = [
@@ -765,6 +774,7 @@ def scan(ctx):
 
     results = scan_all(config.machines, config.settings, local=config.local)
     show_scan_results(results, target_version)
+    _save_machine_ids(config, results)
 
 
 # ── update subcommand ────────────────────────────────────────────────────────────
@@ -904,7 +914,7 @@ def rollback(ctx, machine, target_version, rollback_all_flag):
     elif rollback_all_flag:
         machines_to_rollback = config.machines
     else:
-        error("Specify --machine or --all")
+        error(t("specify_machine_or_all"))
         sys.exit(1)
 
     results = []
@@ -913,7 +923,7 @@ def rollback(ctx, machine, target_version, rollback_all_flag):
         current_version = scan_result["version"]
         if not target_version:
             prev = _find_previous_version(config, m.name, m.host,
-                                          m.machine_id or "")
+                                          m.machine_id or "", current_version)
             if not prev:
                 error(f"{t('rollback_no_versions')}: {m.name}")
                 continue
@@ -923,7 +933,7 @@ def rollback(ctx, machine, target_version, rollback_all_flag):
 
         available = list_installed_versions_remote(m, config.settings)
         if target_ver not in available:
-            error(f"Version {target_ver} not found on {m.name}")
+            error(t("version_not_on_machine", name=m.name, version=target_ver))
             continue
 
         scan_result["version"] = current_version
@@ -946,14 +956,32 @@ def rollback(ctx, machine, target_version, rollback_all_flag):
     show_update_results(results)
 
 
-def _find_previous_version(config, name, host, machine_id):
-    """Find the previous version from history for a given machine"""
+def _find_previous_version(config, name, host, machine_id, current_version=""):
+    """Find the previous version from history for a given machine.
+
+    Matches history records whose `to_version` equals `current_version` (the
+    machine's currently-installed version), and returns that record's
+    `from_version`. This is the "version that was running before the
+    machine arrived at `current_version`".
+
+    If no `current_version` is given (or no record matches), returns the
+    `from_version` of the most recent relevant record as a fallback.
+    """
     from .history import get_history
     records = get_history(
         machine_id=machine_id or None, machine=name, host=host, limit=50,
     )
+    # Preferred: most recent record whose to_version matches the current version
     for r in records:
-        if r.get("event_type") in ("update", "install", "rollback") and r.get("to_version"):
+        if (r.get("event_type") in ("update", "install", "rollback")
+                and r.get("to_version")
+                and r.get("to_version") == current_version
+                and r.get("from_version")):
+            return r.get("from_version", "")
+    # Fallback: most recent record with any from_version
+    for r in records:
+        if (r.get("event_type") in ("update", "install", "rollback")
+                and r.get("from_version")):
             return r.get("from_version", "")
     return None
 
@@ -1125,4 +1153,78 @@ def backfill_events(ctx):
     """Backfill rename/first_seen events from existing history"""
     from .history import backfill_events as do_backfill
     do_backfill()
-    success("Backfill complete")
+    success(t("backfill_complete"))
+
+
+# ── pin / unpin subcommands ────────────────────────────────────────────────────
+@cli.command()
+@click.option("--machine", required=True, help=t("cli_help_machine"))
+@click.option("--version", "target_version", required=True, help=t("cli_help_pin_version"))
+@click.option("--force", is_flag=True, default=False,
+              help=t("cli_help_pin_force"))
+@click.pass_context
+def pin(ctx, machine, target_version, force):
+    """Manually mark a (machine, version) pair as a known-good pin."""
+    config = ctx.obj["config"]
+    m = config.find_machine(machine)
+    if not m:
+        error(t("pin_no_such_machine", name=machine))
+        sys.exit(1)
+
+    # Validate version is installed
+    is_local = (m.name == "localhost" or m.host == "127.0.0.1")
+    if is_local:
+        installed = list_installed_versions_local(config.local)
+    else:
+        installed = list_installed_versions_remote(m, config.settings)
+    if target_version not in installed:
+        error(t("pin_version_missing", name=machine, version=target_version))
+        sys.exit(1)
+
+    machine_id = m.machine_id or ""
+    if not force and has_recent_pin(machine_id, target_version,
+                                    days=config.settings.pin_dedup_days):
+        info(t("pin_already_recent", machine=machine, version=target_version,
+               days=config.settings.pin_dedup_days))
+        return
+
+    record_event(
+        EVENT_PIN,
+        machine_name=m.name,
+        machine_host=m.host,
+        machine_id=machine_id,
+        version=target_version,
+    )
+    success(t("pin_recorded", machine=machine, version=target_version))
+
+
+@cli.command()
+@click.option("--machine", required=True, help=t("cli_help_machine"))
+@click.option("--version", "target_version", required=True, help=t("cli_help_unpin_version"))
+@click.pass_context
+def unpin(ctx, machine, target_version):
+    """Remove the most-recent pin record for a (machine, version) pair."""
+    config = ctx.obj["config"]
+    m = config.find_machine(machine)
+    if not m:
+        error(t("pin_no_such_machine", name=machine))
+        sys.exit(1)
+
+    machine_id = m.machine_id or ""
+    current = latest_pin(machine_id, target_version)
+    if current is None:
+        error(t("unpin_no_record", name=machine, version=target_version))
+        sys.exit(1)
+    if current.get("event_type") == EVENT_UNPIN:
+        # Already unpinned — no-op
+        info(t("unpin_already", name=machine, version=target_version))
+        return
+
+    record_event(
+        EVENT_UNPIN,
+        machine_name=m.name,
+        machine_host=m.host,
+        machine_id=machine_id,
+        version=target_version,
+    )
+    success(t("unpin_recorded", machine=machine, version=target_version))

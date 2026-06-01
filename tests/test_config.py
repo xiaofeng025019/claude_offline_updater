@@ -273,3 +273,59 @@ class TestConfigCreateDefault:
     def test_default_config_path(self):
         path = Config.default_config_path()
         assert str(path).endswith(".config/claude-update/config.yaml")
+
+
+class TestPathValidation:
+    """Config paths passed to remote shell must not contain unsafe characters."""
+
+    def _write(self, tmp_path, **overrides):
+        data = {
+            "settings": {
+                "remote_claude_bin": "/usr/local/bin/claude",
+                "remote_versions_dir": "/usr/local/share/claude/versions",
+                "remote_tmp_dir": "/tmp/claude-update",
+                "local_cache_dir": "/var/cache/claude",
+            },
+            "local": {
+                "enabled": True,
+                "claude_bin": "/usr/local/bin/claude",
+                "versions_dir": "/usr/local/share/claude/versions",
+            },
+            "machines": [],
+        }
+        data["settings"].update(overrides.get("settings", {}))
+        data["local"].update(overrides.get("local", {}))
+        path = tmp_path / "config.yaml"
+        with open(path, "w") as f:
+            yaml.dump(data, f)
+        return path
+
+    def test_safe_paths_accepted(self, tmp_path):
+        path = self._write(tmp_path)
+        config = Config.load(str(path), auto_create=False)
+        assert config.settings.remote_claude_bin == "/usr/local/bin/claude"
+
+    def test_tilde_paths_accepted(self, tmp_path):
+        # Tilde is explicitly whitelisted for the unquoted path strategy
+        path = self._write(
+            tmp_path,
+            settings={"remote_claude_bin": "~/.local/bin/claude"},
+        )
+        config = Config.load(str(path), auto_create=False)
+        assert config.settings.remote_claude_bin == "~/.local/bin/claude"
+
+    def test_shell_metachar_rejected_in_settings(self, tmp_path):
+        path = self._write(
+            tmp_path,
+            settings={"remote_claude_bin": "/usr/bin/claude; rm -rf /"},
+        )
+        with pytest.raises(ValueError, match="shell-unsafe"):
+            Config.load(str(path), auto_create=False)
+
+    def test_shell_metachar_rejected_in_local(self, tmp_path):
+        path = self._write(
+            tmp_path,
+            local={"claude_bin": "/bin/claude`evil`"},
+        )
+        with pytest.raises(ValueError, match="shell-unsafe"):
+            Config.load(str(path), auto_create=False)

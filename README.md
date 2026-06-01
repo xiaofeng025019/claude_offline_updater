@@ -127,6 +127,13 @@ The update flow: **Scan -> Select -> Download -> Deploy -> Verify**
 | `claude-update config show` | Structured view of all settings |
 | `claude-update config add-machine` | Add a remote machine |
 | `claude-update config rm-machine <name>` | Remove a remote machine |
+| `claude-update rollback --all` | Rollback all machines to previous version |
+| `claude-update rollback -m srv1` | Rollback specific machine |
+| `claude-update rollback -m srv1 -v 1.2.0` | Rollback to a specific version |
+| `claude-update pin -m srv1 -v 1.2.0` | Manually mark (machine, version) as known-good |
+| `claude-update pin -m srv1 -v 1.2.0 --force` | Pin ignoring 30-day dedup window |
+| `claude-update unpin -m srv1 -v 1.2.0` | Remove the most-recent pin record |
+| `claude-update backfill-events` | Backfill rename/first_seen events from existing history |
 
 ### Config Management
 
@@ -168,6 +175,8 @@ For detailed function signatures and usage, see [docs/api.md](docs/api.md).
 | Key | Default | Description |
 |-----|---------|-------------|
 | `max_versions` | 3 | Max versions to keep per machine |
+| `max_cache_versions` | 3 | Max versions to keep in local download cache |
+| `pin_dedup_days` | 30 | Auto-pin dedup window in days (0 = no dedup) |
 | `platform` | linux-x64 | Binary platform: linux-x64, linux-arm64, darwin-arm64 |
 | `lang` | en | UI language: en or zh |
 | `connect_timeout` | 10 | SSH connect timeout (seconds) |

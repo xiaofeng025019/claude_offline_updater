@@ -6,9 +6,11 @@ from claude_offline_updater.history import (
     EVENT_ADD,
     EVENT_FIRST_SEEN,
     EVENT_IP_CHANGE,
+    EVENT_PIN,  # NEW
     EVENT_REMOVE,
     EVENT_RENAME,
     EVENT_ROLLBACK,
+    EVENT_UNPIN,  # NEW
     EVENT_UPDATE,
     _read_records,
     get_history,
@@ -325,3 +327,224 @@ class TestRecordRollback:
         result = get_history(event_type="rollback")
         assert len(result) == 1
         assert result[0]["event_type"] == "rollback"
+
+
+class TestRecordPin:
+    def test_event_pin_happy_path(self, history_file):
+        record_event(EVENT_PIN, machine_name="s1", machine_host="10.0.0.1",
+                     machine_id="m1", version="1.0.45")
+        records = _read_records()
+        assert len(records) == 1
+        assert records[0]["event_type"] == "pin"
+        assert records[0]["version"] == "1.0.45"
+        assert records[0]["machine_id"] == "m1"
+
+    def test_event_pin_requires_version(self, history_file):
+        with pytest.raises(ValueError, match="requires version"):
+            record_event(EVENT_PIN, machine_name="s1", machine_host="10.0.0.1")
+
+    def test_event_unpin_requires_version(self, history_file):
+        with pytest.raises(ValueError, match="requires version"):
+            record_event(EVENT_UNPIN, machine_name="s1", machine_host="10.0.0.1")
+
+    def test_event_unpin_happy_path(self, history_file):
+        record_event(EVENT_UNPIN, machine_name="s1", machine_host="10.0.0.1",
+                     machine_id="m1", version="1.0.45")
+        records = _read_records()
+        assert records[0]["event_type"] == "unpin"
+        assert records[0]["version"] == "1.0.45"
+
+    def test_event_pin_normalizes_empty_machine_id(self, history_file):
+        record_event(EVENT_PIN, machine_name="s1", machine_host="10.0.0.1",
+                     machine_id=None, version="1.0.45")
+        records = _read_records()
+        assert records[0]["machine_id"] == ""  # None normalized to ""
+
+    def test_has_recent_pin_no_record_returns_false(self, history_file):
+        from claude_offline_updater.history import has_recent_pin
+        assert has_recent_pin("m1", "1.0.45") is False
+
+    def test_has_recent_pin_within_window_returns_true(self, history_file):
+        from claude_offline_updater.history import has_recent_pin
+        record_event(EVENT_PIN, "s1", "10.0.0.1", machine_id="m1", version="1.0.45")
+        assert has_recent_pin("m1", "1.0.45", days=30) is True
+
+    def test_has_recent_pin_outside_window_returns_false(self, history_file):
+        from datetime import datetime, timedelta
+
+        from claude_offline_updater.history import has_recent_pin
+        old_ts = (datetime.now() - timedelta(days=31)).isoformat()
+        import json
+        with open(history_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "event_type": "pin", "timestamp": old_ts,
+                "machine_name": "s1", "machine_host": "10.0.0.1",
+                "machine_id": "m1", "version": "1.0.45",
+            }) + "\n")
+        assert has_recent_pin("m1", "1.0.45", days=30) is False
+
+    def test_has_recent_pin_producer_consumer_roundtrip(self, history_file, monkeypatch):
+        """Verify has_recent_pin reads timestamps produced by record_event.
+
+        Patches datetime.now inside history module so we can simulate a
+        record written exactly 31 days ago, going through the same producer
+        path the feature actually uses.
+        """
+        from datetime import datetime, timedelta
+        from unittest.mock import patch
+
+        from claude_offline_updater.history import has_recent_pin
+
+        old_now = datetime.now() - timedelta(days=31)
+        with patch("claude_offline_updater.history.datetime") as fake_dt:
+            fake_dt.now.return_value = old_now
+            record_event(EVENT_PIN, "s1", "10.0.0.1",
+                         machine_id="m1", version="1.0.45")
+        # Read with real clock
+        assert has_recent_pin("m1", "1.0.45", days=30) is False
+
+    def test_has_recent_pin_empty_machine_id_returns_false(self, history_file):
+        from claude_offline_updater.history import has_recent_pin
+        record_event(EVENT_PIN, "s1", "10.0.0.1", machine_id="", version="1.0.45")
+        assert has_recent_pin("", "1.0.45", days=30) is False
+
+    def test_latest_pin_no_record_returns_none(self, history_file):
+        from claude_offline_updater.history import latest_pin
+        assert latest_pin("m1", "1.0.45") is None
+
+    def test_latest_pin_returns_pin_event(self, history_file):
+        from claude_offline_updater.history import latest_pin
+        record_event(EVENT_PIN, "s1", "10.0.0.1", machine_id="m1", version="1.0.45")
+        result = latest_pin("m1", "1.0.45")
+        assert result is not None
+        assert result["event_type"] == "pin"
+
+    def test_latest_pin_unpin_after_pin_returns_unpin(self, history_file):
+        from datetime import datetime, timedelta
+        from unittest.mock import patch
+
+        from claude_offline_updater.history import latest_pin
+
+        base = datetime(2026, 6, 1, 12, 0, 0)
+        with patch("claude_offline_updater.history.datetime") as fake_dt:
+            fake_dt.now.side_effect = [base, base + timedelta(microseconds=1)]
+            record_event(EVENT_PIN, "s1", "10.0.0.1", machine_id="m1", version="1.0.45")
+            record_event(EVENT_UNPIN, "s1", "10.0.0.1", machine_id="m1", version="1.0.45")
+        result = latest_pin("m1", "1.0.45")
+        assert result["event_type"] == "unpin"
+
+    def test_latest_pin_re_pin_after_unpin_returns_pin(self, history_file):
+        from datetime import datetime, timedelta
+        from unittest.mock import patch
+
+        from claude_offline_updater.history import latest_pin
+
+        base = datetime(2026, 6, 1, 12, 0, 0)
+        with patch("claude_offline_updater.history.datetime") as fake_dt:
+            fake_dt.now.side_effect = [
+                base,
+                base + timedelta(microseconds=1),
+                base + timedelta(microseconds=2),
+            ]
+            record_event(EVENT_PIN, "s1", "10.0.0.1", machine_id="m1", version="1.0.45")
+            record_event(EVENT_UNPIN, "s1", "10.0.0.1", machine_id="m1", version="1.0.45")
+            record_event(EVENT_PIN, "s1", "10.0.0.1", machine_id="m1", version="1.0.45")
+        result = latest_pin("m1", "1.0.45")
+        assert result["event_type"] == "pin"
+
+
+class TestHistoryFilePermissions:
+    """history.jsonl contains machine hostnames/IPs — must not be world-readable."""
+
+    def test_append_sets_owner_only_mode(self, history_file):
+        import stat
+        record_event(EVENT_PIN, "s1", "10.0.0.1", machine_id="m1", version="1.0.45")
+        mode = history_file.stat().st_mode
+        # File mode should be 0o600 (or 0o700 on directories) — owner-only
+        assert mode & stat.S_IRWXG == 0, "group must not have any access"
+        assert mode & stat.S_IRWXO == 0, "others must not have any access"
+
+    def test_parent_dir_is_owner_only(self, history_file):
+        record_event(EVENT_PIN, "s1", "10.0.0.1", machine_id="m1", version="1.0.45")
+        import stat
+        dir_mode = history_file.parent.stat().st_mode
+        assert dir_mode & stat.S_IRWXG == 0
+        assert dir_mode & stat.S_IRWXO == 0
+
+
+class TestHasRecentPinStateAwareness:
+    """has_recent_pin must consider pin/unpin state, not just raw pin events."""
+
+    def test_unpin_then_repin_is_not_deduped(self, history_file):
+        from claude_offline_updater.history import (
+            EVENT_PIN,
+            EVENT_UNPIN,
+            has_recent_pin,
+        )
+        record_event(EVENT_PIN, "s1", "10.0.0.1", machine_id="m1", version="1.0.45")
+        record_event(EVENT_UNPIN, "s1", "10.0.0.1", machine_id="m1", version="1.0.45")
+        # Re-pin within dedup window should be allowed because current state is unpinned
+        assert has_recent_pin("m1", "1.0.45", days=30) is False
+
+    def test_pin_followed_by_unpin_is_not_deduped(self, history_file):
+        from claude_offline_updater.history import EVENT_PIN, EVENT_UNPIN, has_recent_pin
+        record_event(EVENT_PIN, "s1", "10.0.0.1", machine_id="m1", version="1.0.45")
+        record_event(EVENT_UNPIN, "s1", "10.0.0.1", machine_id="m1", version="1.0.45")
+        # After unpin, has_recent_pin should be False regardless of original pin timestamp
+        assert has_recent_pin("m1", "1.0.45", days=365) is False
+
+    def test_pin_then_unpin_then_pin_in_window(self, history_file):
+        from datetime import datetime, timedelta
+        from unittest.mock import patch
+
+        from claude_offline_updater.history import EVENT_PIN, EVENT_UNPIN, has_recent_pin
+
+        base = datetime.now()
+        with patch("claude_offline_updater.history.datetime") as fake_dt:
+            fake_dt.now.side_effect = [
+                base - timedelta(days=1),
+                base - timedelta(hours=1),
+                base,
+            ]
+            record_event(EVENT_PIN, "s1", "10.0.0.1", machine_id="m1", version="1.0.45")
+            record_event(EVENT_UNPIN, "s1", "10.0.0.1", machine_id="m1", version="1.0.45")
+            record_event(EVENT_PIN, "s1", "10.0.0.1", machine_id="m1", version="1.0.45")
+        # Latest event is a fresh pin → dedup applies
+        assert has_recent_pin("m1", "1.0.45", days=30) is True
+
+
+class TestBackfillPreservesFailedStatus:
+    """backfill_events must not reclassify failed updates as installs."""
+
+    def test_failed_update_not_reclassified(self, history_file):
+        from claude_offline_updater.history import (
+            EVENT_UPDATE,
+            _read_records,
+            backfill_events,
+        )
+        history_file.parent.mkdir(parents=True, exist_ok=True)
+        # A failed first-time install attempt
+        with open(history_file, "w", encoding="utf-8") as f:
+            f.write('{"event_type": "update", "status": "failed", '
+                    '"from_version": "Not installed", "to_version": "1.0.0", '
+                    '"machine_name": "s1", "machine_host": "10.0.0.1", '
+                    '"machine_id": "m1", "timestamp": "2026-01-01T00:00:00"}\n')
+        backfill_events()
+        records = _read_records()
+        assert records[0]["event_type"] == EVENT_UPDATE  # not reclassified
+
+    def test_successful_install_reclassified(self, history_file):
+        from claude_offline_updater.history import (
+            EVENT_INSTALL,
+            _read_records,
+            backfill_events,
+        )
+        history_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(history_file, "w", encoding="utf-8") as f:
+            f.write('{"event_type": "update", "status": "success", '
+                    '"from_version": "Not installed", "to_version": "1.0.0", '
+                    '"machine_name": "s1", "machine_host": "10.0.0.1", '
+                    '"machine_id": "m1", "timestamp": "2026-01-01T00:00:00"}\n')
+        backfill_events()
+        records = _read_records()
+        assert records[0]["event_type"] == EVENT_INSTALL
