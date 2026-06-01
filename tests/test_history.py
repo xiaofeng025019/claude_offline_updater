@@ -6,9 +6,11 @@ from claude_offline_updater.history import (
     EVENT_ADD,
     EVENT_FIRST_SEEN,
     EVENT_IP_CHANGE,
+    EVENT_PIN,                  # NEW
     EVENT_REMOVE,
     EVENT_RENAME,
     EVENT_ROLLBACK,
+    EVENT_UNPIN,                # NEW
     EVENT_UPDATE,
     _read_records,
     get_history,
@@ -325,3 +327,40 @@ class TestRecordRollback:
         result = get_history(event_type="rollback")
         assert len(result) == 1
         assert result[0]["event_type"] == "rollback"
+
+
+class TestRecordPin:
+    def test_event_pin_happy_path(self, history_file):
+        from claude_offline_updater.history import EVENT_PIN
+        record_event(EVENT_PIN, machine_name="s1", machine_host="10.0.0.1",
+                     machine_id="m1", version="1.0.45")
+        records = _read_records()
+        assert len(records) == 1
+        assert records[0]["event_type"] == "pin"
+        assert records[0]["version"] == "1.0.45"
+        assert records[0]["machine_id"] == "m1"
+
+    def test_event_pin_requires_version(self, history_file):
+        from claude_offline_updater.history import EVENT_PIN
+        with pytest.raises(ValueError, match="requires version"):
+            record_event(EVENT_PIN, machine_name="s1", machine_host="10.0.0.1")
+
+    def test_event_unpin_requires_version(self, history_file):
+        from claude_offline_updater.history import EVENT_UNPIN
+        with pytest.raises(ValueError, match="requires version"):
+            record_event(EVENT_UNPIN, machine_name="s1", machine_host="10.0.0.1")
+
+    def test_event_unpin_happy_path(self, history_file):
+        from claude_offline_updater.history import EVENT_UNPIN
+        record_event(EVENT_UNPIN, machine_name="s1", machine_host="10.0.0.1",
+                     machine_id="m1", version="1.0.45")
+        records = _read_records()
+        assert records[0]["event_type"] == "unpin"
+        assert records[0]["version"] == "1.0.45"
+
+    def test_event_pin_normalizes_empty_machine_id(self, history_file):
+        from claude_offline_updater.history import EVENT_PIN
+        record_event(EVENT_PIN, machine_name="s1", machine_host="10.0.0.1",
+                     machine_id=None, version="1.0.45")
+        records = _read_records()
+        assert records[0]["machine_id"] == ""  # None normalized to ""

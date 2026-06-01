@@ -17,9 +17,12 @@ EVENT_REMOVE = "remove"
 EVENT_RENAME = "rename"
 EVENT_IP_CHANGE = "ip_change"
 EVENT_FIRST_SEEN = "first_seen"
+EVENT_PIN = "pin"
+EVENT_UNPIN = "unpin"
 
 VALID_EVENT_TYPES = (EVENT_UPDATE, EVENT_INSTALL, EVENT_ROLLBACK, EVENT_ADD,
-                     EVENT_REMOVE, EVENT_RENAME, EVENT_IP_CHANGE, EVENT_FIRST_SEEN)
+                     EVENT_REMOVE, EVENT_RENAME, EVENT_IP_CHANGE, EVENT_FIRST_SEEN,
+                     EVENT_PIN, EVENT_UNPIN)
 
 
 def _read_records() -> list[dict]:
@@ -99,7 +102,7 @@ def record_rollback(machine_name: str, machine_host: str,
 
 def record_event(event_type: str, machine_name: str, machine_host: str,
                  machine_id: str = "", *, old_name: str = "",
-                 old_host: str = ""):
+                 old_host: str = "", version: str = ""):
     """Record a non-update operation event"""
     if event_type not in VALID_EVENT_TYPES:
         raise ValueError(f"Invalid event_type: {event_type}")
@@ -109,6 +112,8 @@ def record_event(event_type: str, machine_name: str, machine_host: str,
         raise ValueError("Use record_batch() for install events")
     if event_type == EVENT_ROLLBACK:
         raise ValueError("Use record_rollback() for rollback events")
+    if event_type in (EVENT_PIN, EVENT_UNPIN) and not version:
+        raise ValueError(f"record_event({event_type}, ...) requires version=")
     if event_type == EVENT_RENAME and not old_name:
         raise ValueError("record_event(EVENT_RENAME, ...) requires old_name=")
     if event_type == EVENT_IP_CHANGE and not old_host:
@@ -125,6 +130,8 @@ def record_event(event_type: str, machine_name: str, machine_host: str,
         record["old_name"] = old_name
     elif event_type == EVENT_IP_CHANGE:
         record["old_host"] = old_host
+    elif event_type in (EVENT_PIN, EVENT_UNPIN):
+        record["version"] = version
 
     _append_record(record)
 
