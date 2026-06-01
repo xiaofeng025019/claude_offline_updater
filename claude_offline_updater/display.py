@@ -203,6 +203,16 @@ def show_oplog_table(records: list[dict]):
             detail_str = t("detail_first_seen", mid=f"{mid[:8]}..." if mid else "-")
             duration_str = "-"
 
+        elif etype == "pin":
+            event_str = f"[green]📌 {t('event_pin')}[/green]"
+            detail_str = r.get("version", "")
+            duration_str = "-"
+
+        elif etype == "unpin":
+            event_str = f"[dim]📌 {t('event_unpin')}[/dim]"
+            detail_str = r.get("version", "")
+            duration_str = "-"
+
         else:
             event_str = etype
             detail_str = "-"
