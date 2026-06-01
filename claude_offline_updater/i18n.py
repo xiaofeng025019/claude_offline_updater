@@ -171,7 +171,7 @@ _T: dict[str, dict[str, str]] = {
     "rollback_confirm":      {"zh": "确认回退 {name}: {current} → {target}?",
                               "en": "Confirm rollback {name}: {current} → {target}?"},
     "rollback_success":      {"zh": "回退成功", "en": "Rollback successful"},
-    "rollback_failed":       {"zh": "回退失败", "en": "Rollback failed"},
+    "rollback_failed":       {"zh": "回退失败: {detail}", "en": "Rollback failed: {detail}"},
     "rollback_no_versions":  {"zh": "没有可回退的版本", "en": "No versions available for rollback"},
     "rollback_already":      {"zh": "当前已是该版本", "en": "Already on this version"},
 

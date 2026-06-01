@@ -322,7 +322,9 @@ def deploy_all(
 
     # Sort: local first, remote in original selection order
     def sort_key(r):
-        if r.get("is_local"):
+        # is_local must be looked up from the original selection (results don't carry it)
+        is_local = any(s.get("is_local") and s["name"] == r["name"] for s in selected)
+        if is_local:
             return (0, 0)
         name_order = {r2["name"]: i + 1 for i, r2 in enumerate(selected)}
         return (1, name_order.get(r["name"], 999))
@@ -364,9 +366,11 @@ def _rollback_symlink(client: paramiko.SSHClient, claude_bin: str, target: str, 
     """Rollback symlink to specified target"""
     prefix = _prefix(label)
     try:
-        client.exec_command(
+        stdin, stdout, stderr = client.exec_command(
             f"ln -sf {shlex.quote(target)} {shlex.quote(claude_bin)}", timeout=10,
         )
+        # Wait for ln -sf to actually complete on the remote before returning
+        stdout.channel.recv_exit_status()
     except Exception as e:
         warn(f"{prefix}Rollback failed: {e}")
 
@@ -603,13 +607,13 @@ def rollback_to_machine(
                     "duration_seconds": time.time() - start_time}
 
         # Replace symlink
-        client.exec_command(
+        stdin, stdout, stderr = client.exec_command(
             f"ln -sf {vdir}/{tver} {cbin}", timeout=10,
         )
+        # Wait for ln -sf to actually complete on the remote before verifying
+        stdout.channel.recv_exit_status()
 
         # Verify
-        import time as _time
-        _time.sleep(0.5)
         stdin, stdout, stderr = client.exec_command(
             f"{cbin} --version 2>/dev/null", timeout=10,
         )
@@ -685,7 +689,9 @@ def rollback_all(
                     })
 
     def sort_key(r):
-        if r.get("is_local"):
+        # is_local must be looked up from the original target (results don't carry it)
+        is_local = any(t.get("is_local") and t["name"] == r["name"] for t in targets)
+        if is_local:
             return (0, 0)
         name_order = {r2["name"]: i + 1 for i, r2 in enumerate(targets)}
         return (1, name_order.get(r["name"], 999))

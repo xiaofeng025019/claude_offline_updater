@@ -217,9 +217,12 @@ def _interactive_rollback(ctx):
     # Find previous version from history
     machine_id = scan_result.get("machine_id", "")
     host = scan_result.get("host", "")
+    # machine_choice is the questionary internal value ("local" or machine name);
+    # but records use "localhost" as the local machine name. Map here.
+    history_machine = "localhost" if machine_choice == "local" else machine_choice
     history_records = get_history(
         machine_id=machine_id or None,
-        machine=machine_choice, host=host, limit=50,
+        machine=history_machine, host=host, limit=50,
     )
     prev_version = None
     for r in history_records:
@@ -924,7 +927,8 @@ def rollback(ctx, machine, target_version, rollback_all_flag):
             continue
 
         scan_result["version"] = current_version
-        r = do_rollback([scan_result], target_ver, config.settings)
+        r = do_rollback([scan_result], target_ver, config.settings,
+                        local=config.local)
         results.extend(r)
 
     # Record rollback events

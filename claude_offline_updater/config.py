@@ -1,7 +1,9 @@
 """YAML configuration loading and management"""
 
+import contextlib
 import os
 import tempfile
+import typing
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -137,9 +139,23 @@ class Config:
         settings_kw = {k: v for k, v in merged.items()
                        if k in Settings.__dataclass_fields__}
         # YAML may load int fields as strings; coerce them
+        # Use typing.get_type_hints to also handle PEP 604 / future annotations
+        try:
+            hints = typing.get_type_hints(Settings)
+        except Exception:
+            hints = {}
         for k, v in settings_kw.items():
-            if Settings.__dataclass_fields__[k].type is int and not isinstance(v, int):
-                settings_kw[k] = int(v)
+            field_type = hints.get(k, Settings.__dataclass_fields__[k].type)
+            # Normalize: strip Optional/Union to get the core type
+            origin = typing.get_origin(field_type)
+            if origin is typing.Union or origin is typing.Optional:
+                args = [a for a in typing.get_args(field_type) if a is not type(None)]
+                core = args[0] if args else field_type
+            else:
+                core = field_type
+            if core is int and not isinstance(v, int) and not isinstance(v, bool):
+                with contextlib.suppress(TypeError, ValueError):
+                    settings_kw[k] = int(v)
         settings = Settings(**settings_kw)
 
         # Parse local config
