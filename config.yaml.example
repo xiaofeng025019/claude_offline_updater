@@ -21,6 +21,7 @@ settings:
   max_workers: 5                     # Max parallel deployments
   scp_bandwidth_limit: 0             # KB/s, 0 = unlimited
   lang: en                           # en | zh
+  pin_dedup_days: 30                 # Auto-pin dedup window (days); 0 = no dedup
 
 local:
   enabled: true
