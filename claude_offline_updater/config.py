@@ -134,8 +134,13 @@ class Config:
         # Parse settings
         raw_settings = data.get("settings", {})
         merged = {**DEFAULTS, **raw_settings}
-        settings = Settings(**{k: v for k, v in merged.items()
-                               if k in Settings.__dataclass_fields__})
+        settings_kw = {k: v for k, v in merged.items()
+                       if k in Settings.__dataclass_fields__}
+        # YAML may load int fields as strings; coerce them
+        for k, v in settings_kw.items():
+            if Settings.__dataclass_fields__[k].type is int and not isinstance(v, int):
+                settings_kw[k] = int(v)
+        settings = Settings(**settings_kw)
 
         # Parse local config
         raw_local = data.get("local", {})
