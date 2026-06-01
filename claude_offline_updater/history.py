@@ -4,7 +4,7 @@ import fcntl
 import json
 import os
 import tempfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 HISTORY_PATH = Path.home() / ".local" / "share" / "claude-update" / "history.jsonl"
@@ -293,3 +293,37 @@ def backfill_events():
             os.replace(tmp_path, HISTORY_PATH)
         finally:
             fcntl.flock(lockf, fcntl.LOCK_UN)
+
+
+def has_recent_pin(machine_id: str, version: str, days: int = 30) -> bool:
+    """Return True if a pin event for (machine_id, version) exists within `days`."""
+    if not machine_id or not version:
+        return False
+    cutoff = datetime.now() - timedelta(days=days)
+    for r in _read_records():
+        if (r.get("event_type") == EVENT_PIN
+                and r.get("machine_id") == machine_id
+                and r.get("version") == version):
+            try:
+                ts = datetime.fromisoformat(r["timestamp"])
+            except (ValueError, TypeError):
+                continue
+            if ts >= cutoff:
+                return True
+    return False
+
+
+def latest_pin(machine_id: str, version: str) -> dict | None:
+    """Return the most recent pin/unpin event for (machine_id, version),
+    or None. The returned event's type reflects current state."""
+    if not machine_id or not version:
+        return None
+    latest = None
+    for r in _read_records():
+        if (r.get("event_type") in (EVENT_PIN, EVENT_UNPIN)
+                and r.get("machine_id") == machine_id
+                and r.get("version") == version
+                and (latest is None
+                     or r.get("timestamp", "") > latest.get("timestamp", ""))):
+            latest = r
+    return latest

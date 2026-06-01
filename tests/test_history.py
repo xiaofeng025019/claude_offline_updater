@@ -359,3 +359,62 @@ class TestRecordPin:
                      machine_id=None, version="1.0.45")
         records = _read_records()
         assert records[0]["machine_id"] == ""  # None normalized to ""
+
+    def test_has_recent_pin_no_record_returns_false(self, history_file):
+        from claude_offline_updater.history import has_recent_pin
+        assert has_recent_pin("m1", "1.0.45") is False
+
+    def test_has_recent_pin_within_window_returns_true(self, history_file):
+        from claude_offline_updater.history import has_recent_pin
+        record_event(EVENT_PIN, "s1", "10.0.0.1", machine_id="m1", version="1.0.45")
+        assert has_recent_pin("m1", "1.0.45", days=30) is True
+
+    def test_has_recent_pin_outside_window_returns_false(self, history_file):
+        from datetime import datetime, timedelta
+
+        from claude_offline_updater.history import has_recent_pin
+        old_ts = (datetime.now() - timedelta(days=31)).isoformat()
+        import json
+        with open(history_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "event_type": "pin", "timestamp": old_ts,
+                "machine_name": "s1", "machine_host": "10.0.0.1",
+                "machine_id": "m1", "version": "1.0.45",
+            }) + "\n")
+        assert has_recent_pin("m1", "1.0.45", days=30) is False
+
+    def test_has_recent_pin_empty_machine_id_returns_false(self, history_file):
+        from claude_offline_updater.history import has_recent_pin
+        record_event(EVENT_PIN, "s1", "10.0.0.1", machine_id="", version="1.0.45")
+        assert has_recent_pin("", "1.0.45", days=30) is False
+
+    def test_latest_pin_no_record_returns_none(self, history_file):
+        from claude_offline_updater.history import latest_pin
+        assert latest_pin("m1", "1.0.45") is None
+
+    def test_latest_pin_returns_pin_event(self, history_file):
+        from claude_offline_updater.history import latest_pin
+        record_event(EVENT_PIN, "s1", "10.0.0.1", machine_id="m1", version="1.0.45")
+        result = latest_pin("m1", "1.0.45")
+        assert result is not None
+        assert result["event_type"] == "pin"
+
+    def test_latest_pin_unpin_after_pin_returns_unpin(self, history_file):
+        from claude_offline_updater.history import latest_pin
+        record_event(EVENT_PIN, "s1", "10.0.0.1", machine_id="m1", version="1.0.45")
+        import time
+        time.sleep(0.01)
+        record_event(EVENT_UNPIN, "s1", "10.0.0.1", machine_id="m1", version="1.0.45")
+        result = latest_pin("m1", "1.0.45")
+        assert result["event_type"] == "unpin"
+
+    def test_latest_pin_re_pin_after_unpin_returns_pin(self, history_file):
+        from claude_offline_updater.history import latest_pin
+        record_event(EVENT_PIN, "s1", "10.0.0.1", machine_id="m1", version="1.0.45")
+        import time
+        time.sleep(0.01)
+        record_event(EVENT_UNPIN, "s1", "10.0.0.1", machine_id="m1", version="1.0.45")
+        time.sleep(0.01)
+        record_event(EVENT_PIN, "s1", "10.0.0.1", machine_id="m1", version="1.0.45")
+        result = latest_pin("m1", "1.0.45")
+        assert result["event_type"] == "pin"
