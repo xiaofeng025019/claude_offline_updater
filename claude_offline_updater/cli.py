@@ -9,7 +9,15 @@ from . import __version__, get_version_display
 from .config import DEFAULTS, Config, Machine, _shorten_path
 from .display import _prefix, console, error, header, info, show_scan_results, success, warn
 from .downloader import DownloadError
+from .history import (
+    EVENT_PIN,
+    EVENT_UNPIN,
+    has_recent_pin,
+    latest_pin,
+    record_event,
+)
 from .i18n import get_lang, set_lang, t
+from .scanner import list_installed_versions_local, list_installed_versions_remote
 
 
 def _bind_esc(question):
@@ -1127,3 +1135,72 @@ def backfill_events(ctx):
     from .history import backfill_events as do_backfill
     do_backfill()
     success("Backfill complete")
+
+
+# ── pin / unpin subcommands ────────────────────────────────────────────────────
+@cli.command()
+@click.option("--machine", required=True, help="Machine name from config")
+@click.option("--version", "target_version", required=True, help="Version to pin")
+@click.option("--force", is_flag=True, default=False,
+              help="Bypass 30-day dedup check")
+@click.pass_context
+def pin(ctx, machine, target_version, force):
+    """Manually mark a (machine, version) pair as a known-good pin."""
+    config = ctx.obj["config"]
+    m = config.find_machine(machine)
+    if not m:
+        error(t("pin_no_such_machine", name=machine))
+        sys.exit(1)
+
+    # Validate version is installed
+    is_local = (machine == "localhost" or m.host == "127.0.0.1")
+    if is_local:
+        installed = list_installed_versions_local(config.local)
+    else:
+        installed = list_installed_versions_remote(m, config.settings)
+    if target_version not in installed:
+        error(t("pin_version_missing", name=machine, version=target_version))
+        sys.exit(1)
+
+    machine_id = m.machine_id or ""
+    if not force and has_recent_pin(machine_id, target_version,
+                                    days=config.settings.pin_dedup_days):
+        info(t("pin_already_recent", machine=machine, version=target_version,
+               days=config.settings.pin_dedup_days))
+        return
+
+    record_event(
+        EVENT_PIN,
+        machine_name=m.name,
+        machine_host=m.host,
+        machine_id=machine_id,
+        version=target_version,
+    )
+    success(t("pin_recorded", machine=machine, version=target_version))
+
+
+@cli.command()
+@click.option("--machine", required=True, help="Machine name from config")
+@click.option("--version", "target_version", required=True, help="Version to unpin")
+@click.pass_context
+def unpin(ctx, machine, target_version):
+    """Remove the most-recent pin record for a (machine, version) pair."""
+    config = ctx.obj["config"]
+    m = config.find_machine(machine)
+    if not m:
+        error(t("pin_no_such_machine", name=machine))
+        sys.exit(1)
+
+    machine_id = m.machine_id or ""
+    if latest_pin(machine_id, target_version) is None:
+        warn(t("unpin_no_record", name=machine, version=target_version))
+        return
+
+    record_event(
+        EVENT_UNPIN,
+        machine_name=m.name,
+        machine_host=m.host,
+        machine_id=machine_id,
+        version=target_version,
+    )
+    success(t("unpin_recorded", machine=machine, version=target_version))
