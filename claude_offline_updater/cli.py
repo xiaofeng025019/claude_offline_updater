@@ -470,6 +470,7 @@ def _edit_settings(config):
          str, "~/.local/share/claude/versions"),
         ("remote_tmp_dir", s.remote_tmp_dir, str, "/tmp/claude-update"),
         ("ssh_host_key_policy", s.ssh_host_key_policy, str, "warn"),
+        ("pin_dedup_days", str(s.pin_dedup_days), int, "30"),
     ]
 
     choices = [

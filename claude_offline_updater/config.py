@@ -27,6 +27,7 @@ DEFAULTS = {
     "scp_bandwidth_limit": 0,
     "ssh_host_key_policy": "warn",
     "lang": "en",
+    "pin_dedup_days": 30,
 }
 
 _PATH_FIELDS = {
@@ -79,6 +80,7 @@ class Settings:
     scp_bandwidth_limit: int = 0
     ssh_host_key_policy: str = "warn"
     lang: str = "en"
+    pin_dedup_days: int = 30
 
 
 @dataclass
@@ -201,6 +203,7 @@ class Config:
                 "scp_bandwidth_limit": self.settings.scp_bandwidth_limit,
                 "ssh_host_key_policy": self.settings.ssh_host_key_policy,
                 "lang": self.settings.lang,
+                "pin_dedup_days": self.settings.pin_dedup_days,
             },
             "local": {
                 "enabled": self.local.enabled,

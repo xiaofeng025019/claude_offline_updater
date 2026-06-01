@@ -244,6 +244,7 @@ def show_config_panels(config):
          "0 (unlimited)"),
         ("ssh_host_key_policy", s.ssh_host_key_policy,
          DEFAULTS.get("ssh_host_key_policy", "")),
+        ("pin_dedup_days", f"{s.pin_dedup_days}d", f"{DEFAULTS.get('pin_dedup_days', '')}d"),
         ("download_base", s.download_base, ""),
         ("local_cache_dir", s.local_cache_dir, ""),
         ("remote_claude_bin", s.remote_claude_bin, ""),
