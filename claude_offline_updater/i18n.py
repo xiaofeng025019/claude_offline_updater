@@ -155,6 +155,8 @@ _T: dict[str, dict[str, str]] = {
     "event_rename":          {"zh": "重命名", "en": "Rename"},
     "event_ip_change":       {"zh": "IP变更", "en": "IP Change"},
     "event_first_seen":      {"zh": "首次发现", "en": "First Seen"},
+    "event_pin":             {"zh": "标记可用", "en": "Pin"},
+    "event_unpin":           {"zh": "取消标记", "en": "Unpin"},
     "event_rollback":        {"zh": "回退", "en": "Rollback"},
     "detail_renamed":        {"zh": "{old} → {new}", "en": "{old} → {new}"},
     "detail_ip_changed":     {"zh": "{old} → {new}", "en": "{old} → {new}"},
@@ -174,6 +176,22 @@ _T: dict[str, dict[str, str]] = {
     "rollback_failed":       {"zh": "回退失败: {detail}", "en": "Rollback failed: {detail}"},
     "rollback_no_versions":  {"zh": "没有可回退的版本", "en": "No versions available for rollback"},
     "rollback_already":      {"zh": "当前已是该版本", "en": "Already on this version"},
+
+    # ── Pin / Unpin ────────────────────────────────────────────────────────
+    "pin_recorded":          {"zh": "已标记为可用版本: {machine} @ {version}",
+                              "en": "Pinned: {machine} @ {version}"},
+    "unpin_recorded":        {"zh": "已取消标记: {machine} @ {version}",
+                              "en": "Unpinned: {machine} @ {version}"},
+    "pin_no_such_machine":   {"zh": "机器不存在: {name}",
+                              "en": "Machine not found: {name}"},
+    "pin_version_missing":   {"zh": "机器 {name} 上未找到版本 {version}",
+                              "en": "Version {version} not installed on {name}"},
+    "unpin_no_record":       {"zh": "{name} @ {version} 没有 pin 记录",
+                              "en": "No pin record for {name} @ {version}"},
+    "pin_already_recent":    {"zh": "{machine} @ {version} 已在 {days} 天内标记过，跳过",
+                              "en": "{machine} @ {version} already pinned within {days} days, skipping"},
+    "pin_force":             {"zh": "强制覆盖 {days} 天去重",
+                              "en": "Force pin, ignoring {days}-day dedup"},
 
     # ── Config ────────────────────────────────────────────────────────────
     "config_action":         {"zh": "配置操作:", "en": "Config action:"},
