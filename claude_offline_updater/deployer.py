@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import paramiko
 
+from . import history
 from .cleaner import cleanup_local_versions, cleanup_old_versions
 from .config import LocalConfig, Settings
 from .display import _prefix, info, success, warn
@@ -375,6 +376,27 @@ def _rollback_symlink(client: paramiko.SSHClient, claude_bin: str, target: str, 
         warn(f"{prefix}Rollback failed: {e}")
 
 
+def _auto_pin_on_rollback(result: dict, pin_dedup_days: int = 30):
+    """If rollback was a clean success, write an EVENT_PIN record.
+    Independent of any string status convention — single check.
+    Silent skip on dedup (auto path is non-interactive)."""
+    if result.get("status") != "success":
+        return
+    machine_id = result.get("machine_id", "")
+    target_version = result.get("to_version", "")
+    if not machine_id or not target_version:
+        return
+    if history.has_recent_pin(machine_id, target_version, days=pin_dedup_days):
+        return
+    history.record_event(
+        history.EVENT_PIN,
+        machine_name=result["name"],
+        machine_host=result["host"],
+        machine_id=machine_id,
+        version=target_version,
+    )
+
+
 def _scp_with_limit(local_path: str, host: str, port: int, user: str,
                      remote_path: str, limit_kbs: int, settings: Settings):
     """Transfer using scp command with bandwidth limit"""
@@ -561,8 +583,10 @@ def rollback_local(
                 "duration_seconds": time.time() - start_time}
 
     success(f"{_prefix(name)}{t('rollback_success')}: {current_version} → {target_version}")
-    return {**base_result, "status": "success",
-            "duration_seconds": time.time() - start_time}
+    result = {**base_result, "status": "success",
+              "duration_seconds": time.time() - start_time}
+    _auto_pin_on_rollback(result, pin_dedup_days=settings.pin_dedup_days)
+    return result
 
 
 def rollback_to_machine(
@@ -632,8 +656,10 @@ def rollback_to_machine(
                     "duration_seconds": time.time() - start_time}
 
         success(f"{_prefix(name)}{t('rollback_success')}: {current_version} → {target_version}")
-        return {**base_result, "status": "success",
-                "duration_seconds": time.time() - start_time}
+        result = {**base_result, "status": "success",
+                  "duration_seconds": time.time() - start_time}
+        _auto_pin_on_rollback(result, pin_dedup_days=settings.pin_dedup_days)
+        return result
 
     except Exception as e:
         return {**base_result, "status": "failed",
