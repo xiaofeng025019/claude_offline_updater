@@ -24,7 +24,7 @@ jobs:
 
       - name: Detect bump level from commit messages
         id: detect
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const commits = context.payload.commits || [];
