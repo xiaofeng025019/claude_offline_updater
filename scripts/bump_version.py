@@ -100,9 +100,11 @@ def get_latest_tag() -> str | None:
 
 def main():
     parser = argparse.ArgumentParser(description="Bump version in pyproject.toml")
-    group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--level", choices=LEVELS, help="Explicit bump level")
-    group.add_argument(
+    parser.add_argument(
+        "--level", choices=LEVELS,
+        help="Explicit bump level (mutually exclusive with --from-commits)",
+    )
+    parser.add_argument(
         "--from-commits", action="store_true",
         help="Auto-detect level from conventional commit messages since last tag",
     )
@@ -110,7 +112,32 @@ def main():
         "--dry-run", action="store_true",
         help="Print new version without modifying files",
     )
+    parser.add_argument(
+        "--detect-only", action="store_true",
+        help="Print detected level to stdout (one of patch/minor/major) and exit. "
+             "Used by the GitHub Actions workflow. Exit code 0 on detected, "
+             "1 if no conventional commits found.",
+    )
     args = parser.parse_args()
+
+    # Enforce mutual exclusion between --level and --from-commits
+    if args.level and args.from_commits:
+        print("ERROR: --level and --from-commits are mutually exclusive", file=sys.stderr)
+        sys.exit(2)
+    if not args.detect_only and not (args.level or args.from_commits):
+        print("ERROR: one of --level or --from-commits is required", file=sys.stderr)
+        sys.exit(2)
+
+    # --detect-only short-circuits before any I/O so the workflow can
+    # parse a single line reliably.
+    if args.detect_only:
+        tag = get_latest_tag()
+        commits = get_recent_commits(tag)
+        level = detect_level_from_commits(commits)
+        if level is None:
+            sys.exit(1)
+        print(level)
+        sys.exit(0)
 
     current = read_version()
 

@@ -7,26 +7,22 @@ from rich.table import Table
 from .display import console
 from .i18n import t
 
-# Special marker: user selected 'Back'
-_BACK_VALUE = "__back__"
 
+def select_machines(scan_results: list[dict], target_version: str) -> list[dict] | None:
+    """Interactive single-step machine selection.
 
-def select_machines(scan_results: list[dict], target_version: str) -> list[dict]:
-    """Interactive multi-select machines; returns [] if user backs out.
+    Returns:
+      - None      → user pressed ESC. Callers should return to the
+                    previous screen with no warning.
+      - [dict...] → run the update on these selected machines.
 
-    Two-step flow:
-      1. Checkbox to select machines (no back option here — it's
-         non-obvious that checking "← 返回" inside a checkbox actually
-         goes back, since users naturally focus on machines)
-      2. Confirm prompt: "Update N machines? [Y/n]"
-
-    Either step's "no" / ESC returns [], which the caller treats as
-    "user cancelled".
+    Back-out happens only via ESC; the prompt's instruction line
+    tells the user how. There is no '← Back' option in the list.
     """
     if not scan_results:
         return []
 
-    # Build choices (machines only, no "← 返回" — handled in step 2)
+    # Build the checkbox choices — machines only, no back option.
     choices = []
     for r in scan_results:
         ver = r["version"]
@@ -44,32 +40,17 @@ def select_machines(scan_results: list[dict], target_version: str) -> list[dict]
     # Display version info table
     _show_preview_table(scan_results, target_version)
 
-    # Step 1: machine selection
-    q1 = questionary.checkbox(t("select_prompt"), choices=choices)
-    _bind_esc(q1)
-    selected = q1.ask()
-
-    # ESC pressed → back out
-    if selected is None:
-        return []
-
-    # Nothing selected → back out
-    if not selected:
-        return []
-
-    # Step 2: confirm before deploying. The "← 返回" escape hatch is
-    # here as a confirm step (Y/n) so the user has an explicit final
-    # chance to abort — pressing Enter on a confirm by default = yes.
-    q2 = questionary.confirm(
-        t("confirm_update", count=len(selected)),
-        default=True,
+    q = questionary.checkbox(
+        t("select_prompt"),
+        choices=choices,
+        instruction=t("instruction_back"),
     )
-    _bind_esc(q2)
-    confirmed = q2.ask()
+    _bind_esc(q)
+    selected = q.ask()
 
-    # ESC at confirm or answered no → back out
-    if confirmed is None or not confirmed:
-        return []
+    # ESC pressed → silent back-out
+    if selected is None:
+        return None
 
     return selected
 
@@ -83,8 +64,10 @@ def _bind_esc(question):
     def _on_esc(event):
         event.app.exit(exception=KeyboardInterrupt, style="class:aborting")
 
+    # Put `extra` first so our eager binding runs before any default
+    # Escape handler from questionary (e.g. in confirm/prompt).
     question.application.key_bindings = merge_key_bindings(
-        [question.application.key_bindings, extra]
+        [extra, question.application.key_bindings]
     )
     return question
 

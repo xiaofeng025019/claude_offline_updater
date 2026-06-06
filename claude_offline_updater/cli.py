@@ -41,10 +41,18 @@ def _bind_esc(question):
     return question
 
 
-def _select(message, **kwargs):
-    """questionary.select with ESC key bound (ESC returns None)"""
+def _select(message, instruction=None, **kwargs):
+    """questionary.select with ESC key bound (ESC returns None) and
+    an instruction line under the prompt explaining how to back out.
+
+    Pass instruction=None to suppress (e.g. for top-level menus that
+    use ESC for a different purpose like quit). Default is
+    t("instruction_back") — "Press ESC to go back".
+    """
     import questionary
-    return _bind_esc(questionary.select(message, **kwargs))
+    if instruction is None:
+        instruction = t("instruction_back")
+    return _bind_esc(questionary.select(message, instruction=instruction, **kwargs))
 
 
 def _confirm(message, **kwargs):
@@ -201,12 +209,11 @@ def _interactive_rollback(ctx):
         return
 
     machine_choices.append(questionary.Separator())
-    machine_choices.append(questionary.Choice(t("config_return"), value="__back__"))
 
     machine_choice = _select(
         t("rollback_select_machine"), choices=machine_choices,
     ).ask()
-    if not machine_choice or machine_choice == "__back__":
+    if not machine_choice:
         return
 
     # Get current version and installed versions
@@ -258,12 +265,11 @@ def _interactive_rollback(ctx):
         version_choices.append(questionary.Choice(v, value=v))
 
     version_choices.append(questionary.Separator())
-    version_choices.append(questionary.Choice(t("config_return"), value="__back__"))
 
     target_version = _select(
         t("rollback_select_version"), choices=version_choices,
     ).ask()
-    if not target_version or target_version == "__back__":
+    if not target_version:
         return
 
     if target_version == current_version:
@@ -327,14 +333,13 @@ def _interactive_history(ctx):
         choices.append("localhost")
     choices += machine_names
     choices.append(questionary.Separator())
-    choices.append(questionary.Choice(t("config_return"), value="__back__"))
 
     filter_choice = _select(
         t("oplog_filter"),
         choices=choices,
     ).ask()
 
-    if filter_choice is None or filter_choice == "__back__":
+    if filter_choice is None:
         return
     elif filter_choice == t("all_machines"):
         machine_id = None
@@ -378,12 +383,10 @@ def _interactive_config(ctx):
                 t("config_add"),
                 t("config_remove"),
                 t("config_set_lang"),
-                questionary.Separator(),
-                t("config_return"),
             ],
         ).ask()
 
-        if action is None or action == t("config_return"):
+        if action is None:
             break
 
         if action == t("config_edit_settings"):
@@ -405,12 +408,10 @@ def _interactive_config(ctx):
                 choices=[
                     questionary.Choice(f"{t('lang_zh')} (zh)", value="zh"),
                     questionary.Choice(f"{t('lang_en')} (en)", value="en"),
-                    questionary.Separator(),
-                    questionary.Choice(t("config_return"), value="__back__"),
                 ],
             ).ask()
 
-            if lang_choice and lang_choice != "__back__" and lang_choice != current:
+            if lang_choice and lang_choice != current:
                 set_lang(lang_choice)
                 config.settings.lang = lang_choice
                 config.save()
@@ -450,12 +451,9 @@ def _interactive_config(ctx):
             if not machine_names:
                 info(t("no_machines"))
                 continue
-            remove_choices = machine_names + [
-                questionary.Separator(),
-                questionary.Choice(t("config_return"), value="__back__"),
-            ]
+            remove_choices = machine_names
             name = _select(t("select_remove"), choices=remove_choices).ask()
-            if name and name != "__back__":
+            if name:
                 m = config.find_machine(name)
                 if config.remove_machine(name):
                     if m:
@@ -495,13 +493,12 @@ def _edit_settings(config):
         questionary.Choice(f"{k} = {v}  (default: {d})", value=k)
         for k, v, _, d in fields
     ]
-    choices.append(questionary.Choice(t("config_return"), value="__back__"))
 
     field_map = {k: (v, tp) for k, v, tp, _ in fields}
 
     while True:
         field = _select(t("config_edit_settings"), choices=choices).ask()
-        if not field or field == "__back__":
+        if not field:
             break
 
         old_val, tp = field_map[field]
@@ -547,13 +544,12 @@ def _edit_local(config):
         questionary.Choice(f"{k} = {v}", value=k)
         for k, v, _ in fields
     ]
-    choices.append(questionary.Choice(t("config_return"), value="__back__"))
 
     field_map = {k: (v, tp) for k, v, tp in fields}
 
     while True:
         field = _select(t("config_edit_local"), choices=choices).ask()
-        if not field or field == "__back__":
+        if not field:
             break
 
         old_val, tp = field_map[field]
@@ -591,10 +587,8 @@ def _edit_machine(config):
         return
 
     machine_names = [m.name for m in config.machines]
-    machine_names.append(questionary.Separator())
-    machine_names.append(questionary.Choice(t("config_return"), value="__back__"))
     name = _select(t("select_edit_machine"), choices=machine_names).ask()
-    if not name or name == "__back__":
+    if not name:
         return
 
     machine = config.find_machine(name)
@@ -613,13 +607,12 @@ def _edit_machine(config):
         questionary.Choice(f"{k} = {v}", value=k)
         for k, v, _ in fields
     ]
-    choices.append(questionary.Choice(t("config_return"), value="__back__"))
 
     field_map = {k: (v, tp) for k, v, tp in fields}
 
     while True:
         field = _select(t("config_edit_machine"), choices=choices).ask()
-        if not field or field == "__back__":
+        if not field:
             break
 
         old_val, tp = field_map[field]
@@ -693,12 +686,10 @@ def _interactive_cache(ctx):
             choices=[
                 t("cache_clean_keep_n", n=config.settings.max_cache_versions),
                 t("cache_clean_all"),
-                questionary.Separator(),
-                t("config_return"),
             ],
         ).ask()
 
-        if action is None or action == t("config_return"):
+        if action is None:
             break
 
         if action == t("cache_clean_keep_n", n=config.settings.max_cache_versions):
@@ -735,8 +726,8 @@ def _interactive_update(config: Config):
     _save_machine_ids(config, scan_results)
 
     selected = select_machines(scan_results, target_version)
-    if not selected:
-        warn(t("no_selection"))
+    if selected is None:
+        # ESC pressed — silent back-out to previous screen
         return
 
     to_update = [r for r in selected if r["version"] != target_version]
@@ -837,8 +828,8 @@ def update(ctx, update_all, machines, target_version, dry_run, no_local):
 
     selected = scan_results if update_all else select_machines(scan_results, target_version)
 
-    if not selected:
-        warn(t("no_selection"))
+    if selected is None:
+        # ESC in interactive selector — silent back-out
         return
 
     to_update = [r for r in selected if r["version"] != target_version]

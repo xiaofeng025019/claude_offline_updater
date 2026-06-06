@@ -1,8 +1,16 @@
 """Tests for the interactive machine selector.
 
-The selector has a UX requirement: the user must be able to back out
-of the selection. We test that this works regardless of which path
-the user took (explicit "← 返回" check, ESC, or no selection)."""
+Return-value contract (after removing the '← Back' option):
+  - None → user wants to back out silently (ESC). Callers return to
+           the previous screen with no warning.
+  - [machines...] → run the update on the selected machines. (Never
+           empty: callers should treat an unchecked-empty submit as
+           a user mistake and warn — but the selector itself doesn't
+           return [] anymore.)
+
+Back-out happens only via ESC. The prompt's instruction line tells
+the user how to back out, no '← Back' button is shown.
+"""
 
 from unittest.mock import patch
 
@@ -19,56 +27,44 @@ SAMPLE_RESULTS = [
 
 
 class TestSelectMachinesBackBehavior:
-    """User must always be able to back out of the selection."""
 
     @patch("claude_offline_updater.selector.questionary.checkbox")
-    def test_esc_returns_empty(self, mock_checkbox):
-        """ESC keypress (returns None) → returns []."""
+    def test_esc_returns_none(self, mock_checkbox):
+        """ESC at checkbox → None (silent back-out)."""
         mock_checkbox.return_value.ask.return_value = None
-        result = select_machines(SAMPLE_RESULTS, "2.1.167")
-        assert result == []
+        assert select_machines(SAMPLE_RESULTS, "2.1.167") is None
 
     @patch("claude_offline_updater.selector.questionary.checkbox")
-    def test_empty_selection_returns_empty(self, mock_checkbox):
-        """User unchecks everything → returns [] (no machines to update)."""
-        mock_checkbox.return_value.ask.return_value = []
-        result = select_machines(SAMPLE_RESULTS, "2.1.167")
-        assert result == []
-
-    @patch("claude_offline_updater.selector.questionary.confirm")
-    @patch("claude_offline_updater.selector.questionary.checkbox")
-    def test_user_confirms_proceed_returns_selection(
-        self, mock_checkbox, mock_confirm,
-    ):
-        """After picking machines, user confirms proceed → returns selection."""
+    def test_machines_only_returns_them(self, mock_checkbox):
+        """Submit with machines only → those machines."""
         mock_checkbox.return_value.ask.return_value = [SAMPLE_RESULTS[1]]
-        mock_confirm.return_value.ask.return_value = True
-        result = select_machines(SAMPLE_RESULTS, "2.1.167")
-        assert result == [SAMPLE_RESULTS[1]]
+        assert select_machines(SAMPLE_RESULTS, "2.1.167") == [SAMPLE_RESULTS[1]]
 
-    @patch("claude_offline_updater.selector.questionary.confirm")
     @patch("claude_offline_updater.selector.questionary.checkbox")
-    def test_user_says_no_at_confirm_returns_empty(
-        self, mock_checkbox, mock_confirm,
-    ):
-        """User picks machines then says 'no' at confirm → returns [].
-
-        This is the critical fix: even if the user navigates the checkbox
-        and submits with a non-empty selection, the confirm step gives
-        them a final chance to back out.
-        """
+    def test_no_back_choice_in_choices(self, mock_checkbox):
+        """The choices passed to questionary.checkbox should NOT include
+        a '← Back' Choice. Only the real machines."""
         mock_checkbox.return_value.ask.return_value = [SAMPLE_RESULTS[1]]
-        mock_confirm.return_value.ask.return_value = False
-        result = select_machines(SAMPLE_RESULTS, "2.1.167")
-        assert result == []
+        select_machines(SAMPLE_RESULTS, "2.1.167")
+        # Inspect the choices that the selector built
+        choices = mock_checkbox.call_args.kwargs["choices"]
+        titles = [c.title for c in choices]
+        assert not any("返回" in t for t in titles), (
+            f"Found back-like choice in titles: {titles}"
+        )
+        assert len(choices) == len(SAMPLE_RESULTS)
 
-    @patch("claude_offline_updater.selector.questionary.confirm")
+
+class TestSelectorPromptCopy:
+    """The prompt copy must instruct the user to press ESC, not to
+    check a '← Back' box."""
+
     @patch("claude_offline_updater.selector.questionary.checkbox")
-    def test_esc_at_confirm_returns_empty(
-        self, mock_checkbox, mock_confirm,
-    ):
-        """ESC at the confirm step → returns []. User can bail even after picking machines."""
+    def test_prompt_mentions_esc(self, mock_checkbox):
         mock_checkbox.return_value.ask.return_value = [SAMPLE_RESULTS[1]]
-        mock_confirm.return_value.ask.return_value = None  # ESC
-        result = select_machines(SAMPLE_RESULTS, "2.1.167")
-        assert result == []
+        select_machines(SAMPLE_RESULTS, "2.1.167")
+        message = mock_checkbox.call_args.args[0]
+        # The new prompt should NOT mention checking a back box
+        assert "勾选" not in message
+        # And should mention ESC instead
+        assert "ESC" in message

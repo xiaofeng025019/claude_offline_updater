@@ -144,10 +144,11 @@ _T: dict[str, dict[str, str]] = {
     "backfill_complete":       {"zh": "回填完成", "en": "Backfill complete"},
 
     # ── Selection ─────────────────────────────────────────────────────────
-    "select_prompt":         {"zh": "选择要更新的机器（空格选中/取消，回车确认）:",
-                              "en": "Select machines to update (space to toggle, enter to confirm):"},
-    "confirm_update":        {"zh": "确认更新 {count} 台机器？",
-                              "en": "Update {count} machines?"},
+    "select_prompt":         {"zh": "选择要更新的机器（空格选中/取消，回车确认；ESC 返回）:",
+                              "en": "Select machines to update (space to toggle, enter to confirm; ESC to go back):"},
+    "instruction_back":      {"zh": "按 ESC 返回上一页",
+                              "en": "Press ESC to go back"},
+
 
     "preview_title":         {"zh": "机器状态预览", "en": "Machine Status Preview"},
 
@@ -246,7 +247,6 @@ _T: dict[str, dict[str, str]] = {
     "config_add":            {"zh": "添加远程机器", "en": "Add remote machine"},
     "config_remove":         {"zh": "删除远程机器", "en": "Remove remote machine"},
     "config_set_lang":       {"zh": "设置语言", "en": "Set language"},
-    "config_return":         {"zh": "← 返回", "en": "← Back"},
     "config_current_lang":   {"zh": "当前语言", "en": "Current language"},
     "config_select_lang":    {"zh": "选择语言:", "en": "Select language:"},
     "config_lang_changed":   {"zh": "语言已切换为", "en": "Language changed to"},
