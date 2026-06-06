@@ -49,11 +49,12 @@ def detect_level_from_commits(commits: list[str]) -> str | None:
     Rules:
       - feat! / BREAKING CHANGE → major
       - feat: → minor
-      - fix: → patch
+      - fix: / perf: → patch
       - others → None (skip)
     """
     has_feat = False
     has_fix = False
+    has_perf = False
     has_breaking = False
 
     for msg in commits:
@@ -64,12 +65,14 @@ def detect_level_from_commits(commits: list[str]) -> str | None:
             has_feat = True
         if first_line.startswith("fix"):
             has_fix = True
+        if first_line.startswith("perf"):
+            has_perf = True
 
     if has_breaking:
         return "major"
     if has_feat:
         return "minor"
-    if has_fix:
+    if has_fix or has_perf:
         return "patch"
     return None
 

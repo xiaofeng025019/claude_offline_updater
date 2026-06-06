@@ -28,7 +28,7 @@ jobs:
         with:
           script: |
             const commits = context.payload.commits || [];
-            let hasFeat = false, hasFix = false, hasBreaking = false;
+            let hasFeat = false, hasFix = false, hasPerf = false, hasBreaking = false;
 
             for (const c of commits) {
               const msg = c.message || '';
@@ -42,12 +42,15 @@ jobs:
               if (/^fix/.test(firstLine)) {
                 hasFix = true;
               }
+              if (/^perf/.test(firstLine)) {
+                hasPerf = true;
+              }
             }
 
             let level = '';
             if (hasBreaking) level = 'major';
             else if (hasFeat) level = 'minor';
-            else if (hasFix) level = 'patch';
+            else if (hasFix || hasPerf) level = 'patch';
 
             if (level) {
               core.setOutput('level', level);

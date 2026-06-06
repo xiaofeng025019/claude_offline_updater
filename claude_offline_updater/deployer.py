@@ -75,8 +75,13 @@ def deploy_local(
             os.makedirs(os.path.dirname(claude_bin), exist_ok=True)
 
             target_path = os.path.join(versions_dir, target_version)
-            shutil.copy2(binary_path, target_path)
-            os.chmod(target_path, 0o755)
+            # Skip copy if target already exists and is executable
+            if not (os.path.isfile(target_path) and os.access(target_path, os.X_OK)):
+                shutil.copy2(binary_path, target_path)
+                os.chmod(target_path, 0o755)
+                info(f"{_prefix('localhost')}{t('cached_to')} {target_path}")
+            else:
+                info(f"{_prefix('localhost')}{t('skipping_copy_cached', version=target_version)}")
 
             # Update symlink
             if os.path.islink(claude_bin) or os.path.exists(claude_bin):
@@ -168,58 +173,75 @@ def deploy_to_machine(
 
         rollback_target = _get_current_symlink(client, settings.remote_claude_bin)
 
-        info(f"{_prefix(name)}{t('transferring')}")
-        sftp = client.open_sftp()
-        remote_tmp = _resolve_remote_path(client, settings.remote_tmp_dir)
-        remote_path = f"{remote_tmp}/claude"
-        _ensure_remote_dir(client, remote_tmp)
-
-        try:
-            if settings.scp_bandwidth_limit > 0:
-                _scp_with_limit(binary_path, host, port, user,
-                                remote_path, settings.scp_bandwidth_limit, settings)
-            else:
-                sftp.put(binary_path, remote_path)
-        finally:
-            sftp.close()
-
-        client.exec_command(f"chmod +x {shlex.quote(remote_path)}", timeout=10)
-
-        info(f"{_prefix(name)}{t('installing')}")
-        install_ok = False
-        try:
-            stdin, stdout, stderr = client.exec_command(
-                f"{shlex.quote(remote_path)} install", timeout=60,
-            )
-            if stdout.channel.recv_exit_status() == 0:
-                install_ok = True
-        except Exception:
-            pass
-
-        if not install_ok:
-            info(f"{_prefix(name)}{t('deploy_offline')}")
-            # Paths from config are validated shell-safe at load time
-            # (config._validate_path_chars), so we pass them unquoted to
-            # preserve tilde expansion.
+        # Optimization: if the remote already has this version installed, skip
+        # the SCP transfer entirely and go straight to symlink-swap. This
+        # is the common case for rollbacks (target version usually exists)
+        # and re-deployments after a partial failure.
+        if _is_remote_version_installed(
+            client, settings.remote_versions_dir, target_version,
+        ):
+            info(f"{_prefix(name)}{t('skipping_transfer_cached', version=target_version)}")
+            # Even though the binary is already on the remote, the symlink
+            # at remote_claude_bin may still point to the OLD version. Swap
+            # it to the target version before verification.
             vdir = settings.remote_versions_dir
             cbin = settings.remote_claude_bin
-            rpath = remote_path
-            tver = target_version
-            deploy_cmd = (
-                f"mkdir -p {vdir} && "
-                f"mkdir -p $(dirname {cbin}) && "
-                f"cp {rpath} {vdir}/{tver} && "
-                f"chmod +x {vdir}/{tver} && "
-                f"ln -sf {vdir}/{tver} {cbin}"
-            )
-            stdin, stdout, stderr = client.exec_command(deploy_cmd, timeout=30)
-            if stdout.channel.recv_exit_status() != 0:
-                return {**base_result, "status": "failed",
-                        "detail": t("deploy_failed"),
-                        "duration_seconds": time.time() - start_time}
+            ln_cmd = f"ln -sf {vdir}/{target_version} {cbin}"
+            ln_stdin, ln_stdout, ln_stderr = client.exec_command(ln_cmd, timeout=10)
+            ln_stdout.channel.recv_exit_status()
+        else:
+            info(f"{_prefix(name)}{t('transferring')}")
+            sftp = client.open_sftp()
+            remote_tmp = _resolve_remote_path(client, settings.remote_tmp_dir)
+            remote_path = f"{remote_tmp}/claude"
+            _ensure_remote_dir(client, remote_tmp)
 
-            _ensure_path(client, label=name)
-            _set_install_method_remote(client, label=name)
+            try:
+                if settings.scp_bandwidth_limit > 0:
+                    _scp_with_limit(binary_path, host, port, user,
+                                    remote_path, settings.scp_bandwidth_limit, settings)
+                else:
+                    sftp.put(binary_path, remote_path)
+            finally:
+                sftp.close()
+
+            client.exec_command(f"chmod +x {shlex.quote(remote_path)}", timeout=10)
+
+            info(f"{_prefix(name)}{t('installing')}")
+            install_ok = False
+            try:
+                stdin, stdout, stderr = client.exec_command(
+                    f"{shlex.quote(remote_path)} install", timeout=60,
+                )
+                if stdout.channel.recv_exit_status() == 0:
+                    install_ok = True
+            except Exception:
+                pass
+
+            if not install_ok:
+                info(f"{_prefix(name)}{t('deploy_offline')}")
+                # Paths from config are validated shell-safe at load time
+                # (config._validate_path_chars), so we pass them unquoted to
+                # preserve tilde expansion.
+                vdir = settings.remote_versions_dir
+                cbin = settings.remote_claude_bin
+                rpath = remote_path
+                tver = target_version
+                deploy_cmd = (
+                    f"mkdir -p {vdir} && "
+                    f"mkdir -p $(dirname {cbin}) && "
+                    f"cp {rpath} {vdir}/{tver} && "
+                    f"chmod +x {vdir}/{tver} && "
+                    f"ln -sf {vdir}/{tver} {cbin}"
+                )
+                stdin, stdout, stderr = client.exec_command(deploy_cmd, timeout=30)
+                if stdout.channel.recv_exit_status() != 0:
+                    return {**base_result, "status": "failed",
+                            "detail": t("deploy_failed"),
+                            "duration_seconds": time.time() - start_time}
+
+                _ensure_path(client, label=name)
+                _set_install_method_remote(client, label=name)
 
         info(f"{_prefix(name)}{t('verifying_version')}")
         stdin, stdout, stderr = client.exec_command(
@@ -364,6 +386,31 @@ def _get_current_symlink(client: paramiko.SSHClient, claude_bin: str) -> str | N
         return target if target and target != claude_bin else None
     except Exception:
         return None
+
+
+def _is_remote_version_installed(
+    client: paramiko.SSHClient,
+    versions_dir: str,
+    target_version: str,
+) -> bool:
+    """Check whether `versions_dir/<target_version>` already exists and is
+    executable on the remote. Used to skip SCP when re-deploying a version
+    that's already on the remote (saves 10-50 MB of transfer per machine).
+
+    Refuses to run if `target_version` has unsafe characters (defense in
+    depth — versions_dir is config-validated, but version comes from CLI).
+    """
+    if not _is_safe_remote_path(target_version) or not _is_safe_remote_path(versions_dir):
+        return False
+    try:
+        stdin, stdout, stderr = client.exec_command(
+            f"test -x {versions_dir}/{target_version} && echo yes || echo no",
+            timeout=10,
+        )
+        out = stdout.read().decode().strip()
+        return out == "yes"
+    except Exception:
+        return False
 
 
 def _rollback_symlink(client: paramiko.SSHClient, claude_bin: str, target: str, label: str = ""):

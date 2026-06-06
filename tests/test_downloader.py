@@ -146,21 +146,32 @@ class TestDownloadError:
 
 
 class TestGetLatestVersion:
-    @patch("claude_offline_updater.downloader.check_network", return_value=False)
-    def test_network_unreachable_raises(self, mock_net, sample_settings):
+    @patch("claude_offline_updater.downloader.httpx.get")
+    def test_network_unreachable_raises(self, mock_get, sample_settings):
+        """Connection-level failure must surface as DownloadError."""
+        import httpx
+        mock_get.side_effect = httpx.ConnectError("connection refused")
         with pytest.raises(DownloadError):
             get_latest_version(sample_settings)
-        mock_net.assert_called_once()
 
-    @patch("claude_offline_updater.downloader.check_network", return_value=True)
     @patch("claude_offline_updater.downloader.httpx.get")
-    def test_returns_version_on_success(self, mock_get, mock_net, sample_settings):
+    def test_returns_version_on_success(self, mock_get, sample_settings):
         mock_resp = MagicMock()
         mock_resp.text = "1.5.0"
-        mock_resp.raise_for_status = MagicMock()
+        mock_resp.status_code = 200
         mock_get.return_value = mock_resp
         result = get_latest_version(sample_settings)
         assert result == "1.5.0"
+
+    @patch("claude_offline_updater.downloader.httpx.get")
+    def test_does_not_call_check_network_precheck(self, mock_get, sample_settings):
+        """get_latest_version must NOT issue a separate HEAD precheck —
+        the GET is the network probe and the data fetch in one round-trip."""
+        from claude_offline_updater import downloader
+        with patch.object(downloader, "check_network") as mock_check:
+            mock_get.return_value = MagicMock(text="1.0.0", status_code=200)
+            get_latest_version(sample_settings)
+            mock_check.assert_not_called()
 
     @patch("claude_offline_updater.downloader.check_network", return_value=True)
     @patch("claude_offline_updater.downloader.httpx.get", side_effect=Exception("fail"))
@@ -173,8 +184,14 @@ class TestGetLatestVersion:
 
 
 class TestDownloadBinary:
+    @patch("claude_offline_updater.downloader.shutil.copy2")
     @patch("claude_offline_updater.downloader.get_cached_binary")
-    def test_cache_hit_copies_file(self, mock_cached, tmp_path, sample_settings):
+    def test_cache_hit_skips_copy_uses_cache_path_directly(
+        self, mock_cached, mock_copy, tmp_path, sample_settings,
+    ):
+        """When binary is in local cache, download_binary must NOT copy
+        it to output_path — it returns the cache path so deployer can
+        read the cached file directly. Saves a 10-50 MB local copy."""
         cached_file = tmp_path / "cached_binary"
         cached_file.write_bytes(b"\x00" * 200)
         mock_cached.return_value = cached_file
@@ -183,8 +200,10 @@ class TestDownloadBinary:
         download_binary(sample_settings, "1.0.0", output)
 
         mock_cached.assert_called_once_with(sample_settings, "1.0.0")
-        assert Path(output).exists()
-        assert Path(output).stat().st_size == 200
+        # No copy — the cache is the source of truth
+        mock_copy.assert_not_called()
+        # output_path is not used; the cache path is the real path
+        assert not Path(output).exists()
 
 
 class TestVerifyChecksum:

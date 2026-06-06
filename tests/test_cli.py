@@ -127,3 +127,74 @@ class TestUnpinCommand:
         result = runner.invoke(cli, ["unpin", "--machine", "nonexistent", "--version", "1.0.45"])
         assert result.exit_code == 1
         mock_record.assert_not_called()
+
+
+class TestScanCommand:
+    """Smoke tests for the scan subcommand entry point."""
+
+    def test_scan_help(self, runner, sample_config):
+        result = runner.invoke(cli, ["scan", "--help"])
+        assert result.exit_code == 0
+        assert "Scan" in result.output or "scan" in result.output
+
+
+class TestUpdateCommand:
+    def test_update_help(self, runner, sample_config):
+        result = runner.invoke(cli, ["update", "--help"])
+        assert result.exit_code == 0
+
+    def test_update_requires_machine_or_all(self, runner, sample_config):
+        result = runner.invoke(cli, ["update"])
+        # Without --machine or --all, should error
+        assert result.exit_code != 0
+
+
+class TestRollbackCommand:
+    def test_rollback_help(self, runner, sample_config):
+        result = runner.invoke(cli, ["rollback", "--help"])
+        assert result.exit_code == 0
+
+
+class TestHistoryCommand:
+    def test_history_help(self, runner, sample_config):
+        result = runner.invoke(cli, ["history", "--help"])
+        assert result.exit_code == 0
+
+
+class TestBackfillEventsCommand:
+    def test_backfill_events_help(self, runner, sample_config):
+        result = runner.invoke(cli, ["backfill-events", "--help"])
+        assert result.exit_code == 0
+
+
+class TestBindEscRegression:
+    """Regression test for the _MergedKeyBindings AttributeError that crashed
+    the interactive menu in questionary 2.x with prompt_toolkit 3.0.51+."""
+
+    def test_bind_esc_does_not_raise(self, runner, sample_config):
+        """_bind_esc must not crash on prompt_toolkit 3.0.51+ where
+        application.key_bindings is _MergedKeyBindings (no .add())."""
+        import questionary
+
+        from claude_offline_updater.cli import _bind_esc
+        # Use a real question so application is built
+        q = questionary.confirm("test")
+        # This was raising AttributeError: '_MergedKeyBindings' object has no attribute 'add'
+        _bind_esc(q)
+        # The application's key_bindings should now include the merged
+        # bindings with our ESC handler attached
+        assert q.application.key_bindings is not None
+
+    def test_bind_esc_preserves_existing_bindings(self, runner, sample_config):
+        """After _bind_esc, the original bindings (arrow keys, enter, etc.)
+        must still work — only ESC is added."""
+        import questionary
+
+        from claude_offline_updater.cli import _bind_esc
+        q = questionary.select("pick", choices=["a", "b"])
+        _bind_esc(q)
+        merged = q.application.key_bindings
+        # The merge should retain original + add ESC
+        # (we can't easily assert ESC was added, but the object should be
+        # a valid bindings registry)
+        assert merged is not None

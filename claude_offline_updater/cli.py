@@ -21,13 +21,23 @@ from .scanner import list_installed_versions_local, list_installed_versions_remo
 
 
 def _bind_esc(question):
-    """Add ESC key binding to a questionary Question, making ESC behave like Ctrl+C."""
-    kb = question.application.key_bindings
+    """Add ESC key binding to a questionary Question, making ESC behave like Ctrl+C.
 
-    @kb.add(Keys.Escape, eager=True)
+    questionary wraps the underlying prompt_toolkit key_bindings in a
+    _MergedKeyBindings that doesn't expose .add() directly. We create
+    a fresh KeyBindings with our ESC handler and merge it into the
+    application's existing key_bindings.
+    """
+    from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
+    extra = KeyBindings()
+
+    @extra.add(Keys.Escape, eager=True)
     def _on_esc(event):
         event.app.exit(exception=KeyboardInterrupt, style="class:aborting")
 
+    question.application.key_bindings = merge_key_bindings(
+        [question.application.key_bindings, extra]
+    )
     return question
 
 
@@ -742,7 +752,9 @@ def _interactive_update(config: Config):
     with tempfile.TemporaryDirectory(prefix="claude-update-") as tmp_dir:
         binary_path = f"{tmp_dir}/claude"
         try:
-            download_binary(config.settings, target_version, binary_path)
+            # download_binary returns the path to the usable binary
+            # (cache path on hit, output_path on miss)
+            binary_path = download_binary(config.settings, target_version, binary_path)
             verify_checksum(config.settings, target_version, binary_path)
         except DownloadError as e:
             error(str(e))
@@ -845,7 +857,9 @@ def update(ctx, update_all, machines, target_version, dry_run, no_local):
     with tempfile.TemporaryDirectory(prefix="claude-update-") as tmp_dir:
         binary_path = f"{tmp_dir}/claude"
         try:
-            download_binary(config.settings, target_version, binary_path)
+            # download_binary returns the path to the usable binary
+            # (cache path on hit, output_path on miss)
+            binary_path = download_binary(config.settings, target_version, binary_path)
             verify_checksum(config.settings, target_version, binary_path)
         except DownloadError as e:
             error(str(e))

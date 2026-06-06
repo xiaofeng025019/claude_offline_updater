@@ -103,19 +103,28 @@ def get_latest_version(settings: Settings) -> str:
     """Query latest version number (with retries)"""
     info(t("querying_version"))
 
-    if not check_network(settings):
-        warn(t("network_unreachable"))
-        raise DownloadError(t("version_unavailable"))
-
     url = f"{settings.download_base}/latest"
 
     for attempt in range(1, settings.max_retries + 1):
         try:
+            # Try the GET directly. If the server is unreachable, the
+            # GET will raise a connection error — no need for a separate
+            # HEAD precheck (saves one HTTP round-trip per scan).
             resp = httpx.get(url, timeout=30, follow_redirects=True)
-            resp.raise_for_status()
-            version = resp.text.strip()
-            if version:
-                return version
+            if resp.status_code < 500:
+                version = resp.text.strip()
+                if version:
+                    return version
+            if attempt < settings.max_retries:
+                warn(t("query_retrying", attempt=attempt, max_retries=settings.max_retries))
+                time.sleep(2)
+        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout):
+            # Connection-level failure — surface as "network unreachable"
+            if attempt == 1:
+                warn(t("network_unreachable"))
+            if attempt < settings.max_retries:
+                warn(t("query_retrying", attempt=attempt, max_retries=settings.max_retries))
+                time.sleep(2)
         except Exception:
             if attempt < settings.max_retries:
                 warn(t("query_retrying", attempt=attempt, max_retries=settings.max_retries))
@@ -125,14 +134,20 @@ def get_latest_version(settings: Settings) -> str:
     raise DownloadError(t("version_unavailable"))
 
 
-def download_binary(settings: Settings, version: str, output_path: str):
-    """Download binary file (prefer local cache, download and cache on miss)"""
+def download_binary(settings: Settings, version: str, output_path: str) -> str:
+    """Download binary file (prefer local cache, download and cache on miss).
+
+    Returns the path to a usable binary — either the cache path (cache hit,
+    no copy performed) or `output_path` (cache miss, downloaded to that path).
+    The returned path is suitable for verify_checksum and deployer.
+    """
     cached = get_cached_binary(settings, version)
     if cached:
         size_mb = cached.stat().st_size / (1024 * 1024)
         success(f"{t('download_hit_cache')}: {cached.name} ({size_mb:.1f}MB)")
-        shutil.copy2(cached, output_path)
-        return
+        # No copy: the cache IS the source of truth. The deployer will
+        # read directly from the cache, saving 10-50 MB of disk I/O.
+        return str(cached)
 
     url = f"{settings.download_base}/{version}/{settings.platform}/claude"
     info(f"{t('downloading')} Claude Code {version} ({t('download_cache_miss')}) ...")

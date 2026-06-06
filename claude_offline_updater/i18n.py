@@ -131,6 +131,10 @@ _T: dict[str, dict[str, str]] = {
                                 "en": "Version {version} not found in {dir}"},
     "version_not_on_remote":    {"zh": "远程机器上未找到版本 {version}",
                                 "en": "Version {version} not found on remote"},
+    "skipping_transfer_cached": {"zh": "远端已有版本 {version}，跳过传输",
+                                "en": "Remote already has version {version}, skipping transfer"},
+    "skipping_copy_cached":     {"zh": "本地已有版本 {version}，跳过复制",
+                                "en": "Local cache already has version {version}, skipping copy"},
 
     # ── CLI error messages (previously hardcoded English) ──────────────────
     "specify_machine_or_all":  {"zh": "请指定 --machine 或 --all",
@@ -142,6 +146,8 @@ _T: dict[str, dict[str, str]] = {
     # ── Selection ─────────────────────────────────────────────────────────
     "select_prompt":         {"zh": "选择要更新的机器（空格选中/取消，回车确认）:",
                               "en": "Select machines to update (space to toggle, enter to confirm):"},
+    "confirm_update":        {"zh": "确认更新 {count} 台机器？",
+                              "en": "Update {count} machines?"},
 
     "preview_title":         {"zh": "机器状态预览", "en": "Machine Status Preview"},
 
