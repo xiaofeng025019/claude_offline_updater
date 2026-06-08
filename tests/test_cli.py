@@ -167,6 +167,61 @@ class TestBackfillEventsCommand:
         assert result.exit_code == 0
 
 
+class TestInteractiveMain:
+    def test_main_menu_uses_quit_instruction(self, runner, sample_config):
+        from claude_offline_updater.cli import _interactive_main
+        from claude_offline_updater.i18n import t
+
+        ctx = type("Ctx", (), {"obj": {"config": None}})()
+
+        with patch("claude_offline_updater.cli.header"), \
+             patch("claude_offline_updater.cli.info"), \
+             patch("claude_offline_updater.cli._select") as mock_select:
+            mock_select.return_value.ask.return_value = "quit"
+
+            _interactive_main(ctx)
+
+        assert mock_select.call_args.kwargs["instruction"] == t("instruction_quit")
+
+    def test_main_menu_has_no_separator_residue(self, runner, sample_config):
+        import questionary
+
+        from claude_offline_updater.cli import _interactive_main
+
+        ctx = type("Ctx", (), {"obj": {"config": None}})()
+
+        with patch("claude_offline_updater.cli.header"), \
+             patch("claude_offline_updater.cli.info"), \
+             patch("claude_offline_updater.cli._select") as mock_select:
+            mock_select.return_value.ask.return_value = "quit"
+
+            _interactive_main(ctx)
+
+        choices = mock_select.call_args.kwargs["choices"]
+        assert not any(isinstance(choice, questionary.Separator) for choice in choices)
+
+
+class TestPromptInstructions:
+    def test_confirm_uses_questionary_default_instruction(self):
+        from claude_offline_updater.cli import _confirm
+
+        with patch("questionary.confirm") as mock_confirm, \
+             patch("claude_offline_updater.cli._bind_esc", side_effect=lambda q: q):
+            _confirm("confirm?")
+
+        assert mock_confirm.call_args.kwargs["instruction"] is None
+
+    def test_text_uses_back_instruction(self):
+        from claude_offline_updater.cli import _text
+        from claude_offline_updater.i18n import t
+
+        with patch("questionary.text") as mock_text, \
+             patch("claude_offline_updater.cli._bind_esc", side_effect=lambda q: q):
+            _text("name")
+
+        assert mock_text.call_args.kwargs["instruction"] == t("instruction_back")
+
+
 class TestBindEscRegression:
     """Regression test for the _MergedKeyBindings AttributeError that crashed
     the interactive menu in questionary 2.x with prompt_toolkit 3.0.51+."""

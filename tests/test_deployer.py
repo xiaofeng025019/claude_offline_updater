@@ -975,6 +975,11 @@ class TestRollbackToMachineSkipsScpWhenRemoteHasVersion:
 class TestDeployLocalSkipsCopyWhenTargetExists:
     """deploy_local should skip shutil.copy2 if the local version already exists."""
 
+    def _isolate_local_paths(self, sample_local, tmp_path):
+        sample_local.claude_bin = str(tmp_path / "bin" / "claude")
+        sample_local.versions_dir = str(tmp_path / "versions")
+        return sample_local
+
     @patch("claude_offline_updater.deployer.cleanup_local_versions")
     @patch("claude_offline_updater.deployer.subprocess.run")
     @patch("claude_offline_updater.deployer.os.path.isfile")
@@ -983,8 +988,9 @@ class TestDeployLocalSkipsCopyWhenTargetExists:
     @patch("claude_offline_updater.deployer.shutil.copy2")
     def test_deploy_local_skips_copy_when_target_exists(
         self, mock_copy2, mock_symlink, mock_access, mock_isfile, mock_run,
-        mock_cleanup, sample_local, sample_settings,
+        mock_cleanup, sample_local, sample_settings, tmp_path,
     ):
+        sample_local = self._isolate_local_paths(sample_local, tmp_path)
         # target binary exists and is executable → skip copy
         mock_isfile.return_value = True
         mock_access.return_value = True
@@ -1012,11 +1018,12 @@ class TestDeployLocalSkipsCopyWhenTargetExists:
     @patch("claude_offline_updater.deployer._set_install_method_local")
     def test_deploy_local_fallback_path_skips_copy_when_target_exists(
         self, mock_set_method, mock_copy2, mock_symlink, mock_access, mock_isfile,
-        mock_run, mock_cleanup, sample_local, sample_settings,
+        mock_run, mock_cleanup, sample_local, sample_settings, tmp_path,
     ):
         """Manual fallback path: install fails, code falls through to the
         local cp + chmod + symlink block. When target_version already
         exists on disk, shutil.copy2 must be skipped."""
+        sample_local = self._isolate_local_paths(sample_local, tmp_path)
         # install fails (returncode 1) → fallback path
         install_proc = MagicMock(returncode=1)
         verify_proc = MagicMock(returncode=0, stdout="1.0.0\n")

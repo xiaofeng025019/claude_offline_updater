@@ -55,16 +55,18 @@ def _select(message, instruction=None, **kwargs):
     return _bind_esc(questionary.select(message, instruction=instruction, **kwargs))
 
 
-def _confirm(message, **kwargs):
+def _confirm(message, instruction=None, **kwargs):
     """questionary.confirm with ESC key bound (ESC returns None)"""
     import questionary
-    return _bind_esc(questionary.confirm(message, **kwargs))
+    return _bind_esc(questionary.confirm(message, instruction=instruction, **kwargs))
 
 
-def _text(message, **kwargs):
+def _text(message, instruction=None, **kwargs):
     """questionary.text with ESC key bound (ESC returns None)"""
     import questionary
-    return _bind_esc(questionary.text(message, **kwargs))
+    if instruction is None:
+        instruction = t("instruction_back")
+    return _bind_esc(questionary.text(message, instruction=instruction, **kwargs))
 
 
 @click.group(invoke_without_command=True)
@@ -111,6 +113,7 @@ def _interactive_main(ctx):
     while True:
         action = _select(
             t("menu_prompt"),
+            instruction=t("instruction_quit"),
             choices=[
                 questionary.Choice(t("menu_scan"), value="scan"),
                 questionary.Choice(t("menu_update"), value="update"),
@@ -118,7 +121,6 @@ def _interactive_main(ctx):
                 questionary.Choice(t("menu_history"), value="history"),
                 questionary.Choice(t("menu_config"), value="config"),
                 questionary.Choice(t("menu_cache"), value="cache"),
-                questionary.Separator(),
                 questionary.Choice(t("menu_quit"), value="quit"),
             ],
         ).ask()
@@ -208,8 +210,6 @@ def _interactive_rollback(ctx):
         info(t("no_machines"))
         return
 
-    machine_choices.append(questionary.Separator())
-
     machine_choice = _select(
         t("rollback_select_machine"), choices=machine_choices,
     ).ask()
@@ -264,8 +264,6 @@ def _interactive_rollback(ctx):
     for v in available:
         version_choices.append(questionary.Choice(v, value=v))
 
-    version_choices.append(questionary.Separator())
-
     target_version = _select(
         t("rollback_select_version"), choices=version_choices,
     ).ask()
@@ -317,7 +315,6 @@ def _interactive_rollback(ctx):
 
 def _interactive_history(ctx):
     """Interactive history"""
-    import questionary
 
     from .display import show_oplog_table
     from .history import get_history
@@ -332,7 +329,6 @@ def _interactive_history(ctx):
     if config.local.enabled:
         choices.append("localhost")
     choices += machine_names
-    choices.append(questionary.Separator())
 
     filter_choice = _select(
         t("oplog_filter"),
@@ -657,7 +653,6 @@ def _edit_machine(config):
 
 def _interactive_cache(ctx):
     """Interactive cache management"""
-    import questionary
     from rich.table import Table
 
     from .display import console

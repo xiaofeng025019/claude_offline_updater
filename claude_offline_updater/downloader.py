@@ -168,7 +168,7 @@ def download_binary(settings: Settings, version: str, output_path: str) -> str:
                 shutil.copy2(output_path, cache_target)
                 info(f"{t('cached_to')}: {cache_target}")
                 clean_cache(settings)
-                return
+                return output_path
             # Empty file with no exception
             last_error = t("download_empty")
             error(last_error)

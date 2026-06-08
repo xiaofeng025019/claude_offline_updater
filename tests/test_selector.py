@@ -60,11 +60,13 @@ class TestSelectorPromptCopy:
     check a '← Back' box."""
 
     @patch("claude_offline_updater.selector.questionary.checkbox")
-    def test_prompt_mentions_esc(self, mock_checkbox):
+    def test_instruction_mentions_esc(self, mock_checkbox):
         mock_checkbox.return_value.ask.return_value = [SAMPLE_RESULTS[1]]
         select_machines(SAMPLE_RESULTS, "2.1.167")
         message = mock_checkbox.call_args.args[0]
-        # The new prompt should NOT mention checking a back box
+        instruction = mock_checkbox.call_args.kwargs["instruction"]
+        # The prompt should NOT mention checking a back box or duplicate ESC.
         assert "勾选" not in message
-        # And should mention ESC instead
-        assert "ESC" in message
+        assert "ESC" not in message
+        # The instruction line tells the user how to go back.
+        assert "ESC" in instruction

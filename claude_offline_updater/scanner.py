@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import shlex
+import shutil
 import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -22,19 +23,8 @@ logging.getLogger("paramiko").setLevel(logging.CRITICAL)
 def scan_local(local: LocalConfig) -> dict:
     """Get local machine's Claude Code version"""
     claude_bin = os.path.expanduser(local.claude_bin)
-    version = t("status_not_installed")
-
-    if os.path.islink(claude_bin) or os.path.isfile(claude_bin):
-        try:
-            result = subprocess.run(
-                [claude_bin, "--version"],
-                capture_output=True, text=True, timeout=10,
-            )
-            match = re.search(r'(\d+\.\d+\.\d+)', result.stdout)
-            if match:
-                version = match.group(1)
-        except Exception:
-            pass
+    versions_dir = os.path.expanduser(local.versions_dir)
+    version = _get_local_version(claude_bin, versions_dir)
 
     return {
         "name": "localhost",
@@ -46,6 +36,60 @@ def scan_local(local: LocalConfig) -> dict:
         "is_local": True,
         "machine_id": _read_local_machine_id(),
     }
+
+
+def _get_local_version(configured_bin: str, versions_dir: str) -> str:
+    """Detect local Claude Code version.
+
+    Prefer the configured managed binary path, then fall back to `claude` on
+    PATH. If the entrypoint is missing but managed version files exist, use the
+    newest executable version so scans don't report "Not installed" after a
+    stale/missing symlink.
+    """
+    candidates = [(configured_bin, True)]
+    path_bin = shutil.which("claude")
+    if path_bin and path_bin != configured_bin:
+        candidates.append((path_bin, False))
+
+    for candidate, require_exists in candidates:
+        version = _get_version_from_binary(candidate, require_exists=require_exists)
+        if version:
+            return version
+
+    latest_managed = _get_latest_managed_version(versions_dir)
+    if latest_managed:
+        return latest_managed
+    return t("status_not_installed")
+
+
+def _get_version_from_binary(binary: str, require_exists: bool = True) -> str:
+    if require_exists and not (os.path.islink(binary) or os.path.isfile(binary)):
+        return ""
+    try:
+        result = subprocess.run(
+            [binary, "--version"],
+            capture_output=True, text=True, timeout=10,
+        )
+        match = re.search(r'(\d+\.\d+\.\d+)', result.stdout)
+        if match:
+            return match.group(1)
+    except Exception:
+        pass
+    return ""
+
+
+def _get_latest_managed_version(versions_dir: str) -> str:
+    if not os.path.isdir(versions_dir):
+        return ""
+    versions = []
+    for name in os.listdir(versions_dir):
+        path = os.path.join(versions_dir, name)
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            versions.append(name)
+    if not versions:
+        return ""
+    versions.sort(key=_version_key, reverse=True)
+    return versions[0]
 
 
 def scan_machine(machine: Machine, settings: Settings) -> dict:

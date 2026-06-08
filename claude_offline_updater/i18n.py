@@ -144,10 +144,12 @@ _T: dict[str, dict[str, str]] = {
     "backfill_complete":       {"zh": "回填完成", "en": "Backfill complete"},
 
     # ── Selection ─────────────────────────────────────────────────────────
-    "select_prompt":         {"zh": "选择要更新的机器（空格选中/取消，回车确认；ESC 返回）:",
-                              "en": "Select machines to update (space to toggle, enter to confirm; ESC to go back):"},
+    "select_prompt":         {"zh": "选择要更新的机器（空格选中/取消，回车确认）:",
+                              "en": "Select machines to update (space to toggle, enter to confirm):"},
     "instruction_back":      {"zh": "按 ESC 返回上一页",
                               "en": "Press ESC to go back"},
+    "instruction_quit":      {"zh": "按 ESC 退出",
+                              "en": "Press ESC to quit"},
 
 
     "preview_title":         {"zh": "机器状态预览", "en": "Machine Status Preview"},

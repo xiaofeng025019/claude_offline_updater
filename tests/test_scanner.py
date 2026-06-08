@@ -22,13 +22,55 @@ class TestScanLocal:
             assert result["is_local"] is True
             assert result["name"] == "localhost"
 
-    def test_returns_not_installed_no_binary(self, sample_local):
+    def test_falls_back_to_path_claude_when_configured_binary_missing(self, sample_local):
+        with (
+            patch("claude_offline_updater.scanner.os.path.islink", return_value=False),
+            patch("claude_offline_updater.scanner.os.path.isfile", return_value=False),
+            patch(
+                "claude_offline_updater.scanner.shutil.which",
+                return_value="/usr/local/bin/claude",
+            ),
+            patch("claude_offline_updater.scanner.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(stdout="Claude Code 2.0.1\n", stderr="")
+
+            result = scan_local(sample_local)
+
+            assert result["version"] == "2.0.1"
+            mock_run.assert_called_once_with(
+                ["/usr/local/bin/claude", "--version"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+
+    def test_falls_back_to_latest_version_dir_when_entrypoint_missing(
+        self, sample_local, tmp_path,
+    ):
+        versions_dir = tmp_path / "versions"
+        versions_dir.mkdir()
+        for version in ("2.1.165", "2.1.168", "2.1.167"):
+            path = versions_dir / version
+            path.write_bytes(b"binary")
+            path.chmod(0o755)
+        sample_local.claude_bin = str(tmp_path / "bin" / "claude")
+        sample_local.versions_dir = str(versions_dir)
+
+        with patch("claude_offline_updater.scanner.shutil.which", return_value=None):
+            result = scan_local(sample_local)
+
+        assert result["version"] == "2.1.168"
+
+    def test_returns_not_installed_no_binary(self, sample_local, tmp_path):
+        sample_local.versions_dir = str(tmp_path / "missing-versions")
         with patch("claude_offline_updater.scanner.os.path.islink", return_value=False), \
-             patch("claude_offline_updater.scanner.os.path.isfile", return_value=False):
+             patch("claude_offline_updater.scanner.os.path.isfile", return_value=False), \
+             patch("claude_offline_updater.scanner.shutil.which", return_value=None):
             result = scan_local(sample_local)
             assert result["version"] == "Not installed"
 
-    def test_handles_subprocess_exception(self, sample_local):
+    def test_handles_subprocess_exception(self, sample_local, tmp_path):
+        sample_local.versions_dir = str(tmp_path / "missing-versions")
         with (
             patch("claude_offline_updater.scanner.os.path.islink", return_value=True),
             patch(

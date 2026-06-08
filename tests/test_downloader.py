@@ -197,13 +197,36 @@ class TestDownloadBinary:
         mock_cached.return_value = cached_file
 
         output = str(tmp_path / "output")
-        download_binary(sample_settings, "1.0.0", output)
+        result = download_binary(sample_settings, "1.0.0", output)
 
+        assert result == str(cached_file)
         mock_cached.assert_called_once_with(sample_settings, "1.0.0")
         # No copy — the cache is the source of truth
         mock_copy.assert_not_called()
         # output_path is not used; the cache path is the real path
         assert not Path(output).exists()
+
+    @patch("claude_offline_updater.downloader.clean_cache")
+    @patch("claude_offline_updater.downloader._cache_path")
+    @patch("claude_offline_updater.downloader.shutil.copy2")
+    @patch("claude_offline_updater.downloader._download_with_progress")
+    @patch("claude_offline_updater.downloader.get_cached_binary")
+    def test_cache_miss_returns_output_path(
+        self, mock_cached, mock_download, mock_copy, mock_cache_path,
+        mock_clean_cache, tmp_path, sample_settings,
+    ):
+        """On cache miss, download_binary must return the output_path,
+        NOT None. Regression: bare `return` on cache miss."""
+        mock_cached.return_value = None
+        output = str(tmp_path / "output")
+        # Simulate successful download: create the file
+        Path(output).write_bytes(b"\x00" * 200)
+        # Prevent touching real cache
+        mock_cache_path.return_value = tmp_path / "cache" / "claude-1.0.0-linux-x64"
+
+        result = download_binary(sample_settings, "1.0.0", output)
+
+        assert result == output
 
 
 class TestVerifyChecksum:
