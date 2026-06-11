@@ -62,10 +62,15 @@ def _confirm(message, instruction=None, **kwargs):
 
 
 def _text(message, instruction=None, **kwargs):
-    """questionary.text with ESC key bound (ESC returns None)"""
+    """questionary.text with ESC key bound (ESC returns None).
+
+    No default instruction: ESC cancels the current input rather than
+    navigating to a 'previous page', so a 'Press ESC to go back' hint
+    would be misleading mid-flow (e.g. while filling in name/host/port/
+    user for a new machine). Pass instruction explicitly if a hint is
+    wanted.
+    """
     import questionary
-    if instruction is None:
-        instruction = t("instruction_back")
     return _bind_esc(questionary.text(message, instruction=instruction, **kwargs))
 
 

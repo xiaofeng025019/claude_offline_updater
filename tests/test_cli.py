@@ -211,15 +211,27 @@ class TestPromptInstructions:
 
         assert mock_confirm.call_args.kwargs["instruction"] is None
 
-    def test_text_uses_back_instruction(self):
+    def test_text_uses_no_instruction_by_default(self):
+        """Text prompts must not show 'Press ESC to go back' — ESC
+        cancels the current input, there is no 'previous page' to return
+        to mid-flow (e.g. while filling in name/host/port/user for a new
+        machine)."""
         from claude_offline_updater.cli import _text
-        from claude_offline_updater.i18n import t
 
         with patch("questionary.text") as mock_text, \
              patch("claude_offline_updater.cli._bind_esc", side_effect=lambda q: q):
             _text("name")
 
-        assert mock_text.call_args.kwargs["instruction"] == t("instruction_back")
+        assert mock_text.call_args.kwargs["instruction"] is None
+
+    def test_text_can_override_instruction(self):
+        from claude_offline_updater.cli import _text
+
+        with patch("questionary.text") as mock_text, \
+             patch("claude_offline_updater.cli._bind_esc", side_effect=lambda q: q):
+            _text("name", instruction="custom hint")
+
+        assert mock_text.call_args.kwargs["instruction"] == "custom hint"
 
 
 class TestBindEscRegression:
